@@ -42,8 +42,6 @@ final class PickerPanelState {
     var mode: PickerMode = .hotkey
     /// Text typed in the host app, trigger included (e.g. "::smi"); inline mode only.
     var inlineQuery = ""
-    /// Settings / Quit footer, shown when the menubar trigger is off.
-    var showsAppButtons = false
 }
 
 /// Takes the first click: the inline panel is never key, so its buttons must act on that click.
@@ -109,19 +107,12 @@ final class PickerPanelController {
     /// Mode of the visible panel, nil when hidden.
     var mode: PickerMode? { panel.isVisible ? state.mode : nil }
 
-    var showsAppButtons: Bool {
-        get { state.showsAppButtons }
-        set { state.showsAppButtons = newValue }
-    }
-
     /// Opens the panel below the caret (above it when there is no room), inside the caret's screen.
     /// `caret` is in AppKit screen coordinates (bottom-left origin).
     func show(at caret: NSRect, mode: PickerMode) {
         model.reset()
         state.mode = mode
         state.inlineQuery = ""
-        // Normally already set by the coordinator; the footer must be in place before sizing.
-        state.showsAppButtons = !AppSettings.menubarEnabled
 
         hostingView.layoutSubtreeIfNeeded()
         let frame = Self.frame(size: hostingView.fittingSize, caret: caret)

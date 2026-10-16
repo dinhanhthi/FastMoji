@@ -83,7 +83,6 @@ final class AppCoordinator {
         hotkeyPicker.onConfirm = { [weak self] emoji in self?.confirmHotkey(emoji) }
         inlinePicker.onConfirm = { [weak self] emoji in self?.confirmInline(emoji) }
         rememberExternalApp()
-        updateAppButtons()
 
         let center = NotificationCenter.default
         observers = [
@@ -156,7 +155,6 @@ final class AppCoordinator {
     private func settingsChanged() {
         hotkey = AppSettings.hotkey
         hotkeyEnabled = AppSettings.hotkeyEnabled
-        updateAppButtons()
 
         let enabled = AppSettings.inlineEnabled
         let sequence = AppSettings.triggerSequence
@@ -171,13 +169,6 @@ final class AppCoordinator {
             triggerWindowMs = windowMs
         }
         updateTap()
-    }
-
-    /// Settings / Quit footer in both panels while the menubar (with its own footer) is off.
-    private func updateAppButtons() {
-        let shows = !AppSettings.menubarEnabled
-        panel.showsAppButtons = shows
-        inlinePanel.showsAppButtons = shows
     }
 
     // MARK: - Tap handler (main thread, synchronous: decide swallow, dispatch the work)

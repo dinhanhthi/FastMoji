@@ -179,7 +179,7 @@ struct SettingsView: View {
     }
 
     private var menubarDescription: String {
-        let base = "Click the menubar icon to search. When it is off, reopen FastMoji from Finder or Spotlight to get back here."
+        let base = "Click the menubar icon to search. Turning it off also hides the menubar icon: reopen FastMoji from Finder or Spotlight to get back here."
         return enabledTriggerCount == 1 ? base + " At least one trigger must stay on." : base
     }
 
