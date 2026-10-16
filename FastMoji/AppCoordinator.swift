@@ -362,10 +362,10 @@ final class AppCoordinator {
         Task { @MainActor [weak self] in
             // Off the main run loop, which also serves the event tap.
             // `CaretLocator.axCaretRect` must stay read-only: it runs while the user keeps typing.
-            let axRect = await Task.detached(priority: .userInitiated) { CaretLocator.axCaretRect() }.value
+            let lookup = await Task.detached(priority: .userInitiated) { CaretLocator.axCaretRect() }.value
             guard let self, self.locatingCaret == mode, request == self.caretRequest else { return }
             self.locatingCaret = nil
-            let caret = CaretLocator.screenRect(fromAX: axRect)
+            let caret = CaretLocator.screenRect(fromAX: lookup)
             switch mode {
             case .hotkey: self.showHotkeyPanel(at: caret)
             case .inline: self.showInlinePanel(at: caret)
@@ -393,7 +393,7 @@ final class AppCoordinator {
         // and a pick is copied instead of inserted (see `deliver`).
         if targetApp?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
             cancelCaretLookup()
-            showHotkeyPanel(at: CaretLocator.screenRect(fromAX: nil))
+            showHotkeyPanel(at: CaretLocator.screenRect(fromAX: .none))
             return
         }
         locateCaret(for: .hotkey)
