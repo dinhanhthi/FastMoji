@@ -4,6 +4,8 @@ import SwiftUI
 /// Menubar popover: search field, shared emoji grid, About / Quit footer. Enter copies.
 struct MenuBarContentView: View {
     let model: EmojiPickerModel
+    /// Nil while hosting unit tests.
+    let permission: AccessibilityPermission?
 
     @State private var window = WindowBox()
     @FocusState private var searchFocused: Bool
@@ -23,6 +25,10 @@ struct MenuBarContentView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             Divider()
+            if let permission, !permission.isTrusted {
+                accessibilityBanner(permission)
+                Divider()
+            }
             EmojiGridView(model: model)
             Divider()
             footer
@@ -51,6 +57,21 @@ struct MenuBarContentView: View {
             copy(emoji)
             close()
         }
+    }
+
+    /// The only place that asks for Accessibility (user action).
+    private func accessibilityBanner(_ permission: AccessibilityPermission) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+            Text("FastMoji needs Accessibility to insert emoji")
+                .font(.callout)
+            Spacer(minLength: 0)
+            Button("Grant Accessibility") { permission.request() }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private var footer: some View {

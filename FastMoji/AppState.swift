@@ -10,6 +10,7 @@ final class AppState {
     let menuBarPicker: EmojiPickerModel
 
     init() {
+        AppSettings.registerDefaults()
         catalog = EmojiCatalog.load()
         search = EmojiSearch(catalog: catalog)
         frecency = FrecencyStore()
