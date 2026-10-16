@@ -11,7 +11,6 @@
 <p align="center">
 
   <a href="https://github.com/dinhanhthi/FastMoji/releases/latest"><img src="https://img.shields.io/badge/Download-macOS%2014%2B-black?style=for-the-badge&logo=apple" alt="Download"></a>
-  
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/Contributing-guide-blue?style=for-the-badge" alt="Contributing"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"></a>
 
@@ -35,7 +34,7 @@
 
 ## Permissions
 
-FastMoji needs **Accessibility** access to read the caret position and type the emoji into the current app. Grant it from Settings (or in System Settings → Privacy &amp; Security → Accessibility). FastMoji never records keystrokes.
+FastMoji needs **Accessibility** access to read the caret position and type the emoji into the current app. Grant it from Settings (or in System Settings → Privacy & Security → Accessibility). FastMoji never records keystrokes.
 
 The inline `::` trigger is paused while an input method such as Vietnamese Telex is active; use `⌘;` instead.
 
