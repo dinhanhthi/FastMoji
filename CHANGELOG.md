@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-16
+
+### Added
+
+- The About panel now links to the project on GitHub.
+- The search panel (inline trigger and hotkey) has Settings and Quit buttons next to the search field. Quit asks for confirmation first.
+
+### Changed
+
+- The magnifying glass in the search panel is larger.
+- The Settings and Quit buttons in the search panel are circular, and always shown whether or not the menubar is on (they replace the footer that only appeared with the menubar off).
+- Settings: the Menubar description now says that turning it off also hides the menubar icon.
+
 ## [0.1.1] - 2026-10-16
 
 ### Added
