@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-16
+
+### Added
+
+- A GitHub link in the Settings sidebar, under the version number.
+
+### Changed
+
+- Settings: each section's description now sits right below its title instead of at the bottom of the section.
+
 ## [0.1.0] - 2026-10-16
 
 ### Added
