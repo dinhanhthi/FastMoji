@@ -124,7 +124,7 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private static let projectURL = URL(string: "https://github.com/dinhanhthi/FastMoji")!
+    static let projectURL = URL(string: "https://github.com/dinhanhthi/FastMoji")!
 
     private static var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"

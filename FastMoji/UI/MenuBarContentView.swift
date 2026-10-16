@@ -115,7 +115,22 @@ struct MenuBarContentView: View {
         close()
         NSApp.activate()
         // Plain logo: the app icon gets a gray backdrop on macOS 26+ (legacy icon format).
-        NSApp.orderFrontStandardAboutPanel(options: [.applicationIcon: NSImage(resource: .appLogo)])
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationIcon: NSImage(resource: .appLogo),
+            .credits: Self.aboutCredits,
+        ])
+    }
+
+    /// Centered GitHub link shown under the version in the About panel.
+    private static var aboutCredits: NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let url = SettingsView.projectURL
+        return NSAttributedString(string: url.absoluteString, attributes: [
+            .link: url,
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .paragraphStyle: paragraph,
+        ])
     }
 
     private func close() {
