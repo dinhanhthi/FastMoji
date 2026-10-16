@@ -3,6 +3,15 @@
     <channel>
         <title>FastMoji</title>
         <item>
+            <title>0.1.2</title>
+            <pubDate>Fri, 16 Oct 2026 23:35:01 +0200</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/dinhanhthi/FastMoji/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>3</sparkle:version>
+            <sparkle:shortVersionString>0.1.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/dinhanhthi/FastMoji/releases/download/v0.1.2/FastMoji-0.1.2.zip" length="4580574" type="application/octet-stream" sparkle:edSignature="8/jO619AQOEE3kCkfJKMg/bRyYBGCUWKR5l1cfkf8CvQx8lQSkjBHgTB5Khanv2nBNF6RUGrMKFZU6ii+nHDCQ=="/>
+        </item>
+        <item>
             <title>0.1.1</title>
             <pubDate>Fri, 16 Oct 2026 23:18:39 +0200</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/dinhanhthi/FastMoji/releases</sparkle:fullReleaseNotesLink>
