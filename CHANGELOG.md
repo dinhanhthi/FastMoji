@@ -1,0 +1,18 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- Inline trigger: type `::` followed by a search term in any text field, then press Return or Tab to replace it with the emoji. The trigger sequence is customizable.
+- Hotkey `⌘;` opens a search panel at the text caret; the shortcut is customizable.
+- Menubar icon with a search popover.
+- Fuzzy search by name, alias and tag, with a "Frequently Used" section when the search is empty.
+- Insert, copy, or both, chosen per trigger; insert by typing or by pasting.
+- Launch at login, and an option to hide the menubar icon.
+- Automatic update checks; "Check for Updates…" in Settings and an Update button in the menubar popover when a new version is available.

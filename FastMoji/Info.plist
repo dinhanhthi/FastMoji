@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Partial Info.plist: merged with the generated one (GENERATE_INFOPLIST_FILE=YES). Sparkle keys only. -->
+	<key>SUFeedURL</key>
+	<string>https://dinhanhthi.github.io/FastMoji/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>9MOR7nDCLNkntRovkiR/Y16L6GfAetAXiG7wwBuxh/g=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+</dict>
+</plist>

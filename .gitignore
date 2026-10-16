@@ -2,3 +2,10 @@ xcuserdata/
 *.xcuserstate
 .DS_Store
 build/
+release/
+
+# Secrets (safety net)
+sparkle_private_key*
+*_sparkle_private_key*
+*.p12
+*.pem

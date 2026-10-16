@@ -7,6 +7,7 @@ import SwiftUI
 struct SettingsView: View {
     let frecency: FrecencyStore
     let permission: AccessibilityPermission
+    let updater: Updater
 
     @AppStorage(AppSettings.Key.inlineEnabled) private var inlineEnabled = true
     @AppStorage(AppSettings.Key.triggerWindowMs) private var triggerWindowMs = 300
@@ -312,6 +313,17 @@ struct SettingsView: View {
                             .foregroundStyle(.orange)
                         Button("Grant Accessibility") { permission.request() }
                     }
+                }
+            }
+
+            LabeledContent("Updates") {
+                HStack {
+                    if updater.updateAvailable {
+                        Label("Update available", systemImage: "arrow.down.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                    Button("Check for Updates…") { updater.checkForUpdates() }
+                        .disabled(!updater.canCheck)
                 }
             }
 

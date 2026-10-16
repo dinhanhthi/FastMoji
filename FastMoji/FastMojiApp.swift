@@ -24,7 +24,8 @@ private struct MenuBarRoot: View {
     var body: some View {
         MenuBarContentView(
             model: appDelegate.appState.menuBarPicker,
-            coordinator: appDelegate.coordinator
+            coordinator: appDelegate.coordinator,
+            updater: appDelegate.updater
         )
     }
 }
@@ -34,6 +35,7 @@ private struct MenuBarRoot: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The only app state; created with the delegate, before SwiftUI first reads it.
     let appState = AppState()
+    let updater = Updater()
     /// Nil while hosting unit tests (no event tap, no permission polling).
     private(set) var coordinator: AppCoordinator?
 
@@ -43,7 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminateOtherInstances()
         let coordinator = AppCoordinator(appState: appState)
         self.coordinator = coordinator
-        SettingsWindowController.shared.configure(frecency: appState.frecency, permission: coordinator.permission)
+        SettingsWindowController.shared.configure(frecency: appState.frecency, permission: coordinator.permission,
+                                                  updater: updater)
+        updater.start()
     }
 
     /// Reopening the app (Finder, Spotlight, `open`) shows Settings: the way back when the menubar is off.

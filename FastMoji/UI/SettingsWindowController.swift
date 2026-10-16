@@ -9,14 +9,16 @@ final class SettingsWindowController {
 
     private var frecency: FrecencyStore?
     private var permission: AccessibilityPermission?
+    private var updater: Updater?
     private var window: NSWindow?
 
     private init() {}
 
     /// Called once at launch by `AppDelegate` (never while hosting unit tests).
-    func configure(frecency: FrecencyStore, permission: AccessibilityPermission) {
+    func configure(frecency: FrecencyStore, permission: AccessibilityPermission, updater: Updater) {
         self.frecency = frecency
         self.permission = permission
+        self.updater = updater
     }
 
     /// Brings the window to the front, creating it on first use.
@@ -29,7 +31,7 @@ final class SettingsWindowController {
     }
 
     private func makeWindow() -> NSWindow? {
-        guard let frecency, let permission else { return nil }
+        guard let frecency, let permission, let updater else { return nil }
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 680, height: 480),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
@@ -41,7 +43,7 @@ final class SettingsWindowController {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
-        let hostingView = NSHostingView(rootView: SettingsView(frecency: frecency, permission: permission))
+        let hostingView = NSHostingView(rootView: SettingsView(frecency: frecency, permission: permission, updater: updater))
         // Keep the fixed window size; the grouped Form scrolls instead of resizing the window.
         hostingView.sizingOptions = []
         window.contentView = hostingView

@@ -58,6 +58,10 @@ jq -c '[.[] | select(.emoji != null and ((.unicode_version | tonumber? // 0) <= 
 - `FastMoji/UI`: SwiftUI views
 - `FastMojiTests`: tests (Swift Testing)
 
+## Releasing
+
+Releases are built, notarized and published locally, with Sparkle for in-app updates. See [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Commits
 
 Use one-line conventional commits, for example `feat: add paste insertion` or `fix(inline): close on app switch`.
