@@ -106,7 +106,8 @@ struct SettingsView: View {
 
     private var about: some View {
         VStack(spacing: 6) {
-            Image(nsImage: NSApp.applicationIconImage)
+            // Not applicationIconImage: macOS 26+ adds a gray backdrop to legacy icons.
+            Image(.appLogo)
                 .resizable()
                 .frame(width: 56, height: 56)
             Text("FastMoji")

@@ -114,7 +114,8 @@ struct MenuBarContentView: View {
     private func showAbout() {
         close()
         NSApp.activate()
-        NSApp.orderFrontStandardAboutPanel(nil)
+        // Plain logo: the app icon gets a gray backdrop on macOS 26+ (legacy icon format).
+        NSApp.orderFrontStandardAboutPanel(options: [.applicationIcon: NSImage(resource: .appLogo)])
     }
 
     private func close() {
