@@ -32,6 +32,41 @@ enum InsertionMethod: String, CaseIterable, Identifiable {
     }
 }
 
+/// Skin tone applied to the people and hand emoji that support one.
+enum SkinTone: String, CaseIterable, Identifiable {
+    case none
+    case light
+    case mediumLight
+    case medium
+    case mediumDark
+    case dark
+
+    var id: String { rawValue }
+
+    /// The Fitzpatrick modifier (U+1F3FB...U+1F3FF), nil for the default yellow.
+    var modifier: Unicode.Scalar? {
+        switch self {
+        case .none: nil
+        case .light: "\u{1F3FB}"
+        case .mediumLight: "\u{1F3FC}"
+        case .medium: "\u{1F3FD}"
+        case .mediumDark: "\u{1F3FE}"
+        case .dark: "\u{1F3FF}"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .none: "Default"
+        case .light: "Light"
+        case .mediumLight: "Medium-Light"
+        case .medium: "Medium"
+        case .mediumDark: "Medium-Dark"
+        case .dark: "Dark"
+        }
+    }
+}
+
 /// A key combination, stored as JSON under `AppSettings.Key.hotkey`.
 struct KeyShortcut: Codable, Equatable {
     var keyCode: UInt16
@@ -72,6 +107,7 @@ enum AppSettings {
         static let triggerWindowMs = "triggerWindowMs"
         static let inlineAction = "inlineAction"
         static let menubarEnabled = "menubarEnabled"
+        static let skinTone = "skinTone"
     }
 
     static let defaultTriggerSequence = "::"
@@ -91,6 +127,7 @@ enum AppSettings {
             Key.triggerWindowMs: 300,
             Key.inlineAction: PickAction.insert.rawValue,
             Key.menubarEnabled: true,
+            Key.skinTone: SkinTone.none.rawValue,
         ]
     }
 
@@ -164,6 +201,11 @@ enum AppSettings {
     static var menubarEnabled: Bool {
         get { store.bool(forKey: Key.menubarEnabled) }
         set { store.set(newValue, forKey: Key.menubarEnabled) }
+    }
+
+    static var skinTone: SkinTone {
+        get { rawEnum(Key.skinTone, default: .none) }
+        set { store.set(newValue.rawValue, forKey: Key.skinTone) }
     }
 
     /// 1 to 3 printable characters: no whitespace, no control character, no query character

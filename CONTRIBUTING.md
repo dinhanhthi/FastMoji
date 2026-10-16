@@ -46,7 +46,7 @@ The emoji data comes from [github/gemoji](https://github.com/github/gemoji). Tre
 D=$(mktemp -d "$TMPDIR/gemoji.XXXX")
 curl -fsSL https://raw.githubusercontent.com/github/gemoji/master/db/emoji.json -o "$D/emoji.json"
 curl -fsSL https://raw.githubusercontent.com/github/gemoji/master/LICENSE -o "$D/LICENSE"
-jq -c '[.[] | select(.emoji != null and ((.unicode_version | tonumber? // 0) <= 15.0)) | {emoji, description, category, aliases, tags}]' "$D/emoji.json" > FastMoji/Resources/emoji.json
+jq -c '[.[] | select(.emoji != null and ((.unicode_version | tonumber? // 0) <= 15.0)) | {emoji, description, category, aliases, tags} + (if .skin_tones then {skin_tones: true} else {} end)]' "$D/emoji.json" > FastMoji/Resources/emoji.json
 ```
 
 `FastMoji/Resources/EMOJI_LICENSE.txt` is the header line `Emoji data from https://github.com/github/gemoji (MIT):` followed by the downloaded `LICENSE` text.

@@ -460,7 +460,7 @@ final class AppCoordinator {
         // Switched to an input method mid-query: the typed length is unknown, copy instead.
         if Self.isInputMethodActive() {
             targetApp = nil
-            EmojiInserter.copy(emoji.emoji)
+            EmojiInserter.copy(emoji.toned(AppSettings.skinTone))
             return
         }
         deliver(emoji, action: AppSettings.inlineAction, deleting: typedLength, immediately: true)
@@ -481,7 +481,7 @@ final class AppCoordinator {
     func deliverMenubarPick(_ emoji: Emoji) {
         let action = AppSettings.menubarAction
         guard action != .copy, AXIsProcessTrusted(), let app = lastExternalApp, !app.isTerminated else {
-            EmojiInserter.copy(emoji.emoji)
+            EmojiInserter.copy(emoji.toned(AppSettings.skinTone))
             return
         }
         targetApp = app
@@ -500,7 +500,7 @@ final class AppCoordinator {
         guard action != .copy, let target, AXIsProcessTrusted(),
               target.processIdentifier != ProcessInfo.processInfo.processIdentifier
         else {
-            EmojiInserter.copy(emoji.emoji)
+            EmojiInserter.copy(emoji.toned(AppSettings.skinTone))
             return
         }
         if immediately {
@@ -524,11 +524,11 @@ final class AppCoordinator {
             NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier
         }
         guard isTargetFrontmost() else {
-            EmojiInserter.copy(emoji.emoji)
+            EmojiInserter.copy(emoji.toned(AppSettings.skinTone))
             return
         }
         EmojiInserter.perform(
-            action, emoji: emoji.emoji, deleting: count,
+            action, emoji: emoji.toned(AppSettings.skinTone), deleting: count,
             method: AppSettings.insertionMethod, isTargetFrontmost: isTargetFrontmost
         )
     }

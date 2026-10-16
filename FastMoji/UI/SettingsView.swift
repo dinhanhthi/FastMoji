@@ -18,6 +18,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.menubarEnabled) private var menubarEnabled = true
     @AppStorage(AppSettings.Key.menubarAction) private var menubarAction = PickAction.copy
     @AppStorage(AppSettings.Key.insertionMethod) private var insertionMethod = InsertionMethod.type
+    @AppStorage(AppSettings.Key.skinTone) private var skinTone = SkinTone.none
 
     /// Edited text of the trigger field; committed on Return or blur, never while typing
     /// (editing "::" to ";;" must not save ":" on the way).
@@ -286,6 +287,7 @@ struct SettingsView: View {
 
     // MARK: - General
 
+    @ViewBuilder
     private var general: some View {
         Section {
             Toggle("Launch at login", isOn: launchAtLoginBinding)
@@ -320,7 +322,27 @@ struct SettingsView: View {
                 Button("Clear history", role: .destructive) { frecency.clear() }
             }
         }
+
+        Section {
+            Picker("Skin tone", selection: $skinTone) {
+                ForEach(SkinTone.allCases) { tone in
+                    Text(Self.toneSample.toned(tone))
+                        .help(tone.title)
+                        .tag(tone)
+                }
+            }
+            .pickerStyle(.segmented)
+        } header: {
+            Text("Emoji")
+        } footer: {
+            Text("Applies to people, hands and body parts. Smileys have no skin tone in Unicode and stay yellow.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
+
+    /// 👋 shown in each tone by the skin tone picker.
+    private static let toneSample = Emoji(emoji: "👋", description: "", category: "", aliases: [], tags: [], skinTones: true)
 
     /// Written through `SMAppService`, read back from its status (a failed call leaves it unchanged).
     private var launchAtLoginBinding: Binding<Bool> {

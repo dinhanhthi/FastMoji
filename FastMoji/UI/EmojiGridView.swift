@@ -6,6 +6,8 @@ import SwiftUI
 struct EmojiGridView: View {
     let model: EmojiPickerModel
 
+    @AppStorage(AppSettings.Key.skinTone) private var skinTone = SkinTone.none
+
     private static let cellSize: CGFloat = 36
     private let columns = Array(
         repeating: GridItem(.flexible(), spacing: 0),
@@ -59,7 +61,7 @@ struct EmojiGridView: View {
 
     private func cell(_ emoji: Emoji, section: PickerSection, sectionIndex: Int, index: Int) -> some View {
         let isSelected = model.selection == PickerSelection(section: sectionIndex, index: index)
-        return Text(emoji.emoji)
+        return Text(emoji.toned(skinTone))
             .font(.system(size: 24))
             .frame(maxWidth: .infinity, minHeight: Self.cellSize, maxHeight: Self.cellSize)
             .background {

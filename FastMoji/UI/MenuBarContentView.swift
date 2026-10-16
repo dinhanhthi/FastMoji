@@ -62,7 +62,7 @@ struct MenuBarContentView: View {
             if let coordinator {
                 coordinator.deliverMenubarPick(emoji)
             } else {
-                EmojiInserter.copy(emoji.emoji)
+                EmojiInserter.copy(emoji.toned(AppSettings.skinTone))
             }
         }
     }
