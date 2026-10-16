@@ -27,18 +27,48 @@ struct SettingsView: View {
     @State private var loginStatus = SMAppService.mainApp.status
     @State private var loginError: String?
     @State private var confirmingClear = false
+    @State private var pane: Pane? = .general
 
     /// Same bounds as the stored value's clamp.
     private static let triggerWindowSlider = Double(AppSettings.triggerWindowRange.lowerBound)...Double(AppSettings.triggerWindowRange.upperBound)
 
-    var body: some View {
-        Form {
-            Section { about }
-            triggers
-            insertion
-            general
+    enum Pane: String, CaseIterable, Identifiable {
+        case general, triggers, insertion
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .general: "General"
+            case .triggers: "Triggers"
+            case .insertion: "Insertion"
+            }
         }
-        .formStyle(.grouped)
+
+        var icon: String {
+            switch self {
+            case .general: "gearshape"
+            case .triggers: "bolt"
+            case .insertion: "text.cursor"
+            }
+        }
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            sidebar
+        } detail: {
+            Form {
+                switch pane ?? .general {
+                case .general: general
+                case .triggers: triggers
+                case .insertion: insertion
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle((pane ?? .general).title)
+        }
+        .capsuleButtons()
         .background(WindowAccessor(box: window))
         .onAppear { refreshLoginStatus() }
         // Back from System Settings (e.g. after approving the login item).
@@ -52,20 +82,39 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - About
+    // MARK: - Sidebar
 
-    private var about: some View {
-        HStack(spacing: 12) {
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .frame(width: 64, height: 64)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("FastMoji")
-                    .font(.title2.bold())
-                Text("Version \(Self.version)")
-                    .foregroundStyle(.secondary)
+    private var sidebar: some View {
+        List(selection: $pane) {
+            ForEach(Pane.allCases) { pane in
+                Label(pane.title, systemImage: pane.icon).tag(pane)
             }
         }
+        .listStyle(.sidebar)
+        // Outside the List: a section header is indented, which pushed the logo off-centre.
+        .safeAreaInset(edge: .top) {
+            about
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+        }
+        .navigationSplitViewColumnWidth(190)
+        // No toolbar in this window: keep the sidebar from being collapsed out of reach.
+        .toolbar(removing: .sidebarToggle)
+    }
+
+    private var about: some View {
+        VStack(spacing: 6) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 56, height: 56)
+            Text("FastMoji")
+                .font(.headline)
+                .foregroundStyle(.primary)
+            Text("Version \(Self.version)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private static var version: String {
@@ -83,53 +132,84 @@ struct SettingsView: View {
         enabled && enabledTriggerCount == 1
     }
 
+    @ViewBuilder
     private var triggers: some View {
-        Section("Triggers") {
-            Toggle("Inline trigger", isOn: $inlineEnabled)
+        Section {
+            Toggle("Enabled", isOn: $inlineEnabled)
                 .disabled(isLastTrigger(inlineEnabled))
-            VStack(alignment: .leading, spacing: 4) {
-                TextField("Trigger", text: $triggerDraft)
-                    .focused($triggerFocused)
-                    .onSubmit { commitTrigger() }
-                    .onChange(of: triggerFocused) { _, focused in
-                        if !focused { commitTrigger() }
-                    }
-                if !AppSettings.isValidTriggerSequence(triggerDraft) {
-                    Text("1 to 3 symbols, e.g. :: or ;; (no letters, digits, _ - + or spaces). Must be typable without ⌥.")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
+            Group {
+                inlineOptions
             }
-            LabeledContent("Key window") {
-                HStack {
-                    Slider(value: triggerWindowBinding, in: Self.triggerWindowSlider, step: 50)
-                    Text("\(triggerWindowMs) ms")
-                        .monospacedDigit()
-                        .frame(width: 56, alignment: .trailing)
-                }
-            }
-            actionPicker("Inline action", selection: $inlineAction)
-            Text("Paused while an input method such as Vietnamese Telex is active — use the hotkey instead.")
+            .disabled(!inlineEnabled)
+        } header: {
+            Text("Inline")
+        } footer: {
+            Text("Type the trigger in any text field, keep typing to search, then press Return or Tab to insert. Paused while an input method such as Vietnamese Telex is active — use the hotkey instead.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
 
-            Toggle("Hotkey", isOn: $hotkeyEnabled)
+        Section {
+            Toggle("Enabled", isOn: $hotkeyEnabled)
                 .disabled(isLastTrigger(hotkeyEnabled))
-            LabeledContent("Shortcut") {
-                ShortcutRecorderView(shortcut: hotkeyBinding)
+            Group {
+                LabeledContent("Shortcut") {
+                    ShortcutRecorderView(shortcut: hotkeyBinding)
+                }
+                actionPicker("Action", selection: $hotkeyAction)
             }
-            actionPicker("Hotkey action", selection: $hotkeyAction)
+            .disabled(!hotkeyEnabled)
+        } header: {
+            Text("Hotkey")
+        } footer: {
+            Text("Opens a search panel at the text caret in any app.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
 
-            Toggle("Menubar", isOn: $menubarEnabled)
+        Section {
+            Toggle("Enabled", isOn: $menubarEnabled)
                 .disabled(isLastTrigger(menubarEnabled))
-            actionPicker("Menubar action", selection: $menubarAction)
+            actionPicker("Action", selection: $menubarAction)
+                .disabled(!menubarEnabled)
+        } header: {
+            Text("Menubar")
+        } footer: {
+            Text(menubarFooter)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
 
-            if enabledTriggerCount == 1 {
-                Text("At least one trigger must stay on")
+    private var menubarFooter: String {
+        let base = "Click the menubar icon to search. When it is off, reopen FastMoji from Finder or Spotlight to get back here."
+        return enabledTriggerCount == 1 ? base + " At least one trigger must stay on." : base
+    }
+
+    @ViewBuilder
+    private var inlineOptions: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            TextField("Trigger", text: $triggerDraft, prompt: Text("::"))
+                .focused($triggerFocused)
+                .onSubmit { commitTrigger() }
+                .onChange(of: triggerFocused) { _, focused in
+                    if !focused { commitTrigger() }
+                }
+            if !AppSettings.isValidTriggerSequence(triggerDraft) {
+                Text("1 to 3 symbols, e.g. :: or ;; (no letters, digits, _ - + or spaces). Must be typable without ⌥.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.red)
             }
         }
+        LabeledContent("Key window") {
+            HStack {
+                Slider(value: triggerWindowBinding, in: Self.triggerWindowSlider, step: 50)
+                Text("\(triggerWindowMs) ms")
+                    .monospacedDigit()
+                    .frame(width: 56, alignment: .trailing)
+            }
+        }
+        actionPicker("Action", selection: $inlineAction)
     }
 
     /// Saves a valid draft; an invalid one goes back to the stored sequence.
@@ -171,22 +251,43 @@ struct SettingsView: View {
     // MARK: - Insertion
 
     private var insertion: some View {
-        Section("Insertion") {
+        Section {
             Picker("Method", selection: $insertionMethod) {
                 ForEach(InsertionMethod.allCases) { method in
-                    Text(method.title).tag(method)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(method.title)
+                        Text(Self.explanation(of: method))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.bottom, 6)
+                    .tag(method)
                 }
             }
-            Text("Paste works in more apps but briefly uses the clipboard")
+            .pickerStyle(.radioGroup)
+        } header: {
+            Text("Method")
+        } footer: {
+            Text("How FastMoji puts the emoji into the app you are typing in, when a trigger's action is Insert or Insert & Copy.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private static func explanation(of method: InsertionMethod) -> String {
+        switch method {
+        case .type:
+            "Types the emoji as if it came from the keyboard. Your clipboard is never touched. Works in almost every app."
+        case .paste:
+            "Puts the emoji on the clipboard, presses ⌘V, then restores your previous clipboard. Use it if an app (e.g. some terminals or remote desktops) shows the wrong character with Type."
         }
     }
 
     // MARK: - General
 
     private var general: some View {
-        Section("General") {
+        Section {
             Toggle("Launch at login", isOn: launchAtLoginBinding)
             if loginStatus == .requiresApproval {
                 Text("Approve FastMoji in System Settings → General → Login Items")

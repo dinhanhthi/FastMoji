@@ -31,12 +31,15 @@ final class SettingsWindowController {
     private func makeWindow() -> NSWindow? {
         guard let frecency, let permission else { return nil }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 560),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 680, height: 480),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "FastMoji Settings"
+        // The sidebar shows the app name; let it run under a transparent title bar.
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         let hostingView = NSHostingView(rootView: SettingsView(frecency: frecency, permission: permission))
         // Keep the fixed window size; the grouped Form scrolls instead of resizing the window.
