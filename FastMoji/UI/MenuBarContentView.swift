@@ -22,11 +22,11 @@ struct MenuBarContentView: View {
                 // Return/Esc/arrows are handled by the key monitor (no .onSubmit, it would double-fire).
                 TextField("Search emoji", text: $model.query)
                     .textFieldStyle(.plain)
-                    .font(.title3)
+                    .font(.body)
                     .focused($searchFocused)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
             Divider()
             if let permission, !permission.isTrusted {
                 accessibilityBanner(permission)
@@ -37,6 +37,7 @@ struct MenuBarContentView: View {
             footer
         }
         .frame(width: 400)
+        .capsuleButtons()
         .background(WindowAccessor(box: window))
         .pickerKeyMonitor(model, window: window) { close() }
         // First open (the window may become key before the accessor has captured it).
@@ -72,24 +73,23 @@ struct MenuBarContentView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
             Text("FastMoji needs Accessibility to insert emoji")
-                .font(.callout)
+                .font(.caption)
             Spacer(minLength: 0)
             Button("Grant Accessibility") { permission.request() }
                 .controlSize(.small)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
     }
 
     private var footer: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             Spacer()
             Button("Settings") { showSettings() }
             Button("About") { showAbout() }
             Button("Quit") { NSApp.terminate(nil) }
         }
-        .buttonStyle(.borderless)
-        .controlSize(.small)
+        .buttonStyle(HoverCapsuleButtonStyle())
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
     }
@@ -137,6 +137,41 @@ struct WindowAccessor: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if let window { box?.window = window }
+        }
+    }
+}
+
+// MARK: - Button style
+
+extension View {
+    /// The app-wide button look: bordered capsules (menubar popover, panels, Settings).
+    func capsuleButtons() -> some View {
+        buttonStyle(.bordered).buttonBorderShape(.capsule)
+    }
+}
+
+/// Capsule with hover and pressed feedback, for the footer buttons (`.bordered` has no hover state).
+struct HoverCapsuleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HoverCapsule(configuration: configuration)
+    }
+
+    private struct HoverCapsule: View {
+        let configuration: ButtonStyleConfiguration
+        @State private var isHovered = false
+
+        var body: some View {
+            let fill = configuration.isPressed ? 0.24 : isHovered ? 0.16 : 0.07
+            configuration.label
+                .font(.callout)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(Color.primary.opacity(fill)))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(isHovered ? 0.22 : 0.1), lineWidth: 1))
+                .contentShape(Capsule())
+                .onHover { isHovered = $0 }
+                .animation(.easeOut(duration: 0.12), value: isHovered)
+                .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
         }
     }
 }

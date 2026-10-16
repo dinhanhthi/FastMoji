@@ -27,6 +27,7 @@ struct PanelContentView: View {
                 appButtons
             }
         }
+        .capsuleButtons()
         .background(WindowAccessor(box: window))
         // The vibrant background is an `NSVisualEffectView` (see `PickerPanelController`).
         .clipShape(shape)
@@ -35,7 +36,7 @@ struct PanelContentView: View {
 
     /// Shown while the menubar is off: the only way to Settings / Quit besides reopening the app.
     private var appButtons: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             Spacer()
             Button("Settings") {
                 onCancel()
@@ -43,10 +44,9 @@ struct PanelContentView: View {
             }
             Button("Quit") { NSApp.terminate(nil) }
         }
-        .buttonStyle(.borderless)
-        .controlSize(.small)
+        .buttonStyle(HoverCapsuleButtonStyle())
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder
