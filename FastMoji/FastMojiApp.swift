@@ -4,20 +4,23 @@ import SwiftUI
 @main
 struct FastMojiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @State private var appState = AppState()
 
     var body: some Scene {
-        MenuBarExtra("FastMoji", systemImage: "face.smiling") {
-            Button("Quit FastMoji") {
-                NSApp.terminate(nil)
-            }
-            .keyboardShortcut("q")
+        MenuBarExtra {
+            MenuBarContentView(model: appState.menuBarPicker)
+        } label: {
+            Image(systemName: "face.smiling")
         }
+        .menuBarExtraStyle(.window)
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Hosting unit tests: never quit the user's running copy.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         terminateOtherInstances()
     }
 
