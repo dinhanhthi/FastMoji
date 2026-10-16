@@ -67,7 +67,15 @@ enum AppSettings {
         static let hotkeyAction = "hotkeyAction"
         static let menubarAction = "menubarAction"
         static let insertionMethod = "insertionMethod"
+        static let inlineEnabled = "inlineEnabled"
+        static let triggerSequence = "triggerSequence"
+        static let triggerWindowMs = "triggerWindowMs"
+        static let inlineAction = "inlineAction"
+        static let menubarEnabled = "menubarEnabled"
     }
+
+    static let defaultTriggerSequence = "::"
+    static let triggerWindowRange = 100...1000
 
     private static var store: UserDefaults { .standard }
 
@@ -78,6 +86,11 @@ enum AppSettings {
             Key.hotkeyAction: PickAction.insert.rawValue,
             Key.menubarAction: PickAction.copy.rawValue,
             Key.insertionMethod: InsertionMethod.type.rawValue,
+            Key.inlineEnabled: true,
+            Key.triggerSequence: defaultTriggerSequence,
+            Key.triggerWindowMs: 300,
+            Key.inlineAction: PickAction.insert.rawValue,
+            Key.menubarEnabled: true,
         ]
     }
 
@@ -118,6 +131,52 @@ enum AppSettings {
     static var insertionMethod: InsertionMethod {
         get { rawEnum(Key.insertionMethod, default: .type) }
         set { store.set(newValue.rawValue, forKey: Key.insertionMethod) }
+    }
+
+    static var inlineEnabled: Bool {
+        get { store.bool(forKey: Key.inlineEnabled) }
+        set { store.set(newValue, forKey: Key.inlineEnabled) }
+    }
+
+    /// Falls back to `defaultTriggerSequence` when the stored value is invalid.
+    static var triggerSequence: String {
+        get {
+            let stored = store.string(forKey: Key.triggerSequence) ?? ""
+            return isValidTriggerSequence(stored) ? stored : defaultTriggerSequence
+        }
+        set {
+            guard isValidTriggerSequence(newValue) else { return }
+            store.set(newValue, forKey: Key.triggerSequence)
+        }
+    }
+
+    /// Max delay between the trigger characters, clamped to `triggerWindowRange`.
+    static var triggerWindowMs: Int {
+        get { clampedTriggerWindow(store.integer(forKey: Key.triggerWindowMs)) }
+        set { store.set(clampedTriggerWindow(newValue), forKey: Key.triggerWindowMs) }
+    }
+
+    static var inlineAction: PickAction {
+        get { rawEnum(Key.inlineAction, default: .insert) }
+        set { store.set(newValue.rawValue, forKey: Key.inlineAction) }
+    }
+
+    static var menubarEnabled: Bool {
+        get { store.bool(forKey: Key.menubarEnabled) }
+        set { store.set(newValue, forKey: Key.menubarEnabled) }
+    }
+
+    /// 1 to 3 printable characters: no whitespace, no control character, no query character
+    /// (a letter, digit, `_`, `-` or `+` could never be told apart from the query).
+    static func isValidTriggerSequence(_ sequence: String) -> Bool {
+        let invalid = CharacterSet.whitespacesAndNewlines.union(.controlCharacters)
+        return !sequence.isEmpty && sequence.count <= 3
+            && !sequence.unicodeScalars.contains(where: invalid.contains)
+            && !sequence.contains(where: TriggerDetector.isQueryCharacter)
+    }
+
+    private static func clampedTriggerWindow(_ ms: Int) -> Int {
+        min(max(ms, triggerWindowRange.lowerBound), triggerWindowRange.upperBound)
     }
 
     /// Reads a String-backed enum the same way `@AppStorage` stores it.

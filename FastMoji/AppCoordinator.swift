@@ -1,8 +1,9 @@
 import AppKit
+import Carbon.HIToolbox
 import CoreGraphics
 import Observation
 
-/// Wires the Accessibility permission, the event tap, the picker panel and the inserter.
+/// Wires the Accessibility permission, the event tap, the picker panels and the inserter.
 /// Created once at launch (never while hosting unit tests, so tests never start the tap).
 @MainActor
 @Observable
@@ -10,20 +11,30 @@ final class AppCoordinator {
     let permission = AccessibilityPermission()
 
     @ObservationIgnored private let tap = EventTap()
-    /// Model of the panel; shares catalog, search and history with the menubar picker.
+    @ObservationIgnored private let frecency: FrecencyStore
+    /// Model of the hotkey panel; shares catalog, search and history with the menubar picker.
     @ObservationIgnored private let hotkeyPicker: EmojiPickerModel
     @ObservationIgnored private let panel: PickerPanelController
+    /// Model of the inline panel, fed by the event tap; separate so it never disturbs the others.
+    @ObservationIgnored private let inlinePicker: EmojiPickerModel
+    @ObservationIgnored private let inlinePanel: PickerPanelController
 
     /// Settings read on every keystroke, refreshed on `UserDefaults.didChangeNotification`.
     @ObservationIgnored private var hotkey = AppSettings.hotkey
     @ObservationIgnored private var hotkeyEnabled = AppSettings.hotkeyEnabled
+    @ObservationIgnored private var inlineEnabled = AppSettings.inlineEnabled
+    @ObservationIgnored private var triggerSequence = AppSettings.triggerSequence
+    @ObservationIgnored private var triggerWindowMs = AppSettings.triggerWindowMs
+    @ObservationIgnored private var detector: TriggerDetector
 
-    /// App that was frontmost when the panel opened; receives the emoji.
+    /// App that was frontmost when a panel opened; receives the emoji.
     @ObservationIgnored private var targetApp: NSRunningApplication?
+    /// Last app other than FastMoji to become frontmost; receives menubar picks.
+    @ObservationIgnored private var lastExternalApp: NSRunningApplication?
     @ObservationIgnored private var retryPending = false
-    /// True while the caret lookup for the next hotkey panel runs off the main thread.
-    @ObservationIgnored private var locatingCaret = false
-    /// Bumped on every toggle so a lookup that finishes after a second press is dropped.
+    /// Panel whose caret lookup runs off the main thread, nil when none.
+    @ObservationIgnored private var locatingCaret: PickerMode?
+    /// Bumped on every lookup and cancel so a lookup that finishes late is dropped.
     @ObservationIgnored private var caretRequest = 0
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
@@ -31,15 +42,48 @@ final class AppCoordinator {
         | CGEventFlags.maskAlternate.rawValue
         | CGEventFlags.maskControl.rawValue
         | CGEventFlags.maskShift.rawValue
+    /// Modifiers that turn a keystroke into a shortcut: such keys never belong to a query.
+    private static let shortcutMask = CGEventFlags.maskCommand.rawValue
+        | CGEventFlags.maskAlternate.rawValue
+        | CGEventFlags.maskControl.rawValue
     /// Lets the host field take focus back before keys are synthesized.
     private static let insertionDelay: Duration = .milliseconds(80)
 
+    /// Virtual key codes (`kVK_*`).
+    private enum KeyCode {
+        static let returnKey: UInt16 = 36
+        static let tab: UInt16 = 48
+        static let space: UInt16 = 49
+        static let backspace: UInt16 = 51
+        static let escape: UInt16 = 53
+        static let enter: UInt16 = 76
+        static let home: UInt16 = 115
+        static let pageUp: UInt16 = 116
+        static let forwardDelete: UInt16 = 117
+        static let end: UInt16 = 119
+        static let pageDown: UInt16 = 121
+        static let left: UInt16 = 123
+        static let right: UInt16 = 124
+        static let down: UInt16 = 125
+        static let up: UInt16 = 126
+    }
+
     init(appState: AppState) {
+        frecency = appState.frecency
         hotkeyPicker = EmojiPickerModel(
             catalog: appState.catalog, search: appState.search, frecency: appState.frecency
         )
         panel = PickerPanelController(model: hotkeyPicker)
-        hotkeyPicker.onConfirm = { [weak self] emoji in self?.confirm(emoji) }
+        inlinePicker = EmojiPickerModel(
+            catalog: appState.catalog, search: appState.search, frecency: appState.frecency
+        )
+        inlinePanel = PickerPanelController(model: inlinePicker)
+        detector = Self.makeDetector(sequence: AppSettings.triggerSequence, windowMs: AppSettings.triggerWindowMs)
+
+        hotkeyPicker.onConfirm = { [weak self] emoji in self?.confirmHotkey(emoji) }
+        inlinePicker.onConfirm = { [weak self] emoji in self?.confirmInline(emoji) }
+        rememberExternalApp()
+        updateAppButtons()
 
         let center = NotificationCenter.default
         observers = [
@@ -49,17 +93,31 @@ final class AppCoordinator {
             center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.updateTap() }
             },
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.rememberExternalApp()
+                    self?.closeInline()
+                }
+            },
         ]
         observeTrust()
         updateTap()
+    }
+
+    private static func makeDetector(sequence: String, windowMs: Int) -> TriggerDetector {
+        TriggerDetector(sequence: sequence, keyWindow: TimeInterval(windowMs) / 1000)
     }
 
     // MARK: - Tap lifecycle
 
     /// Runs the tap while Accessibility is granted and a tap-driven trigger is enabled.
     private func updateTap() {
-        guard permission.isTrusted, hotkeyEnabled else {
+        // `AXIsProcessTrusted()` too: `permission` stops polling once trusted, so it misses a revoke.
+        guard permission.isTrusted, AXIsProcessTrusted(), inlineEnabled || hotkeyEnabled else {
             if tap.isRunning { tap.stop() }
+            closeInline()
             return
         }
         guard !tap.isRunning else { return }
@@ -94,15 +152,37 @@ final class AppCoordinator {
         }
     }
 
+    /// Also fires for every frecency save: only rebuild the detector when its settings changed.
     private func settingsChanged() {
         hotkey = AppSettings.hotkey
         hotkeyEnabled = AppSettings.hotkeyEnabled
+        updateAppButtons()
+
+        let enabled = AppSettings.inlineEnabled
+        let sequence = AppSettings.triggerSequence
+        let windowMs = AppSettings.triggerWindowMs
+        if enabled != inlineEnabled || sequence != triggerSequence || windowMs != triggerWindowMs {
+            closeInline()
+            if sequence != triggerSequence || windowMs != triggerWindowMs {
+                detector = Self.makeDetector(sequence: sequence, windowMs: windowMs)
+            }
+            inlineEnabled = enabled
+            triggerSequence = sequence
+            triggerWindowMs = windowMs
+        }
         updateTap()
+    }
+
+    /// Settings / Quit footer in both panels while the menubar (with its own footer) is off.
+    private func updateAppButtons() {
+        let shows = !AppSettings.menubarEnabled
+        panel.showsAppButtons = shows
+        inlinePanel.showsAppButtons = shows
     }
 
     // MARK: - Tap handler (main thread, synchronous: decide swallow, dispatch the work)
 
-    /// Returns true to swallow the event.
+    /// Returns true to swallow the event. Keystrokes are never logged or stored.
     private func handle(type: CGEventType, event: CGEvent) -> Bool {
         switch type {
         case .keyDown:
@@ -118,69 +198,347 @@ final class AppCoordinator {
     private func handleKeyDown(_ event: CGEvent) -> Bool {
         let keyCode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
         let modifiers = UInt(event.flags.rawValue & Self.modifierMask)
+        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
 
         // `hotkey.isValid`: never swallow plain keystrokes, even if validation upstream fails.
-        if hotkeyEnabled, hotkey.isValid, keyCode == hotkey.keyCode, modifiers == hotkey.modifiers {
+        // While Settings records a new shortcut, the current one must reach its key monitor.
+        if hotkeyEnabled, !ShortcutRecorderView.isRecording, hotkey.isValid,
+           keyCode == hotkey.keyCode, modifiers == hotkey.modifiers {
             // Holding the shortcut must not make the panel flicker.
-            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+            if !isRepeat {
+                closeInline()
                 DispatchQueue.main.async { [weak self] in self?.toggleHotkeyPanel() }
             }
             return true
         }
 
-        // inline trigger (Phase 4): feed the detector with this key here.
+        guard inlineEnabled else { return false }
+        return handleInlineKey(event, keyCode: keyCode, isRepeat: isRepeat)
+    }
+
+    /// Feeds the trigger detector; swallows only navigation / confirm keys of a visible inline panel.
+    private func handleInlineKey(_ event: CGEvent, keyCode: UInt16, isRepeat: Bool) -> Bool {
+        // Typed into FastMoji's own windows (hotkey panel, menubar popover): not a host-app trigger.
+        if panel.isVisible || NSApp.isActive || NSApp.keyWindow != nil {
+            closeInline()
+            return false
+        }
+        if event.flags.rawValue & Self.shortcutMask != 0 {
+            closeInline()
+            return false
+        }
+        if inlinePanel.isVisible, let swallow = handleVisibleInlineKey(keyCode) {
+            return swallow
+        }
+        // A held key never starts or extends a query.
+        if isRepeat {
+            closeInline()
+            return false
+        }
+
+        switch keyCode {
+        case KeyCode.space, KeyCode.returnKey, KeyCode.enter:
+            feed(.boundary(at: Date()))
+        case KeyCode.backspace:
+            feed(.backspace(at: Date()))
+        // Tab may autocomplete (e.g. `std` -> `std::`): what precedes the caret is unknown.
+        case KeyCode.left, KeyCode.right, KeyCode.down, KeyCode.up,
+             KeyCode.home, KeyCode.end, KeyCode.pageUp, KeyCode.pageDown,
+             KeyCode.forwardDelete, KeyCode.escape, KeyCode.tab:
+            closeInline()
+        default:
+            feedCharacters(of: event)
+        }
         return false
+    }
+
+    /// Keys with a special meaning while the inline panel is visible; nil for the others.
+    private func handleVisibleInlineKey(_ keyCode: UInt16) -> Bool? {
+        switch keyCode {
+        case KeyCode.left: moveInline(.left)
+        case KeyCode.right: moveInline(.right)
+        case KeyCode.up: moveInline(.up)
+        case KeyCode.down: moveInline(.down)
+        case KeyCode.escape:
+            closeInline()
+        case KeyCode.returnKey, KeyCode.enter, KeyCode.tab:
+            return pickInlineSelection(keyCode)
+        default:
+            return nil
+        }
+        return true
+    }
+
+    private func moveInline(_ direction: MoveDirection) {
+        applyInlineQuery()
+        inlinePicker.move(direction)
+    }
+
+    /// Return / Enter / Tab: picks the selection when there is one the user asked for,
+    /// otherwise closes and lets the key through (e.g. `::` + Return is a plain newline).
+    private func pickInlineSelection(_ keyCode: UInt16) -> Bool {
+        // Switched to an input method mid-query: the typed length is unknown, delete nothing.
+        if Self.isInputMethodActive() {
+            closeInline()
+            return false
+        }
+        // A query update may still be queued: the pick must match what was typed.
+        applyInlineQuery()
+        guard let emoji = inlinePicker.selectedEmoji,
+              !detector.query.isEmpty || inlinePicker.hasMoved
+        else {
+            if keyCode == KeyCode.tab {
+                closeInline()
+            } else {
+                // The newline reaches the host: a trigger may start right after it.
+                hideInline()
+                feed(.boundary(at: Date()))
+            }
+            return false
+        }
+        let typedLength = detector.typedLength
+        closeInline()
+        // The backspaces are posted inside the tap callback, before the swallowed key returns:
+        // the host app kept the focus (the inline panel never activates), and no key typed after
+        // the pick can reach the host before them. A paste follows on the next main-queue turn.
+        deliver(emoji, action: AppSettings.inlineAction, deleting: typedLength, immediately: true)
+        // History is saved as JSON: out of the tap callback.
+        DispatchQueue.main.async { [weak self] in self?.frecency.record(emoji.emoji) }
+        return true
+    }
+
+    private func feedCharacters(of event: CGEvent) {
+        var length = 0
+        var buffer = [UniChar](repeating: 0, count: 8)
+        event.keyboardGetUnicodeString(
+            maxStringLength: buffer.count, actualStringLength: &length, unicodeString: &buffer
+        )
+        let text = String(utf16CodeUnits: buffer, count: min(length, buffer.count))
+        // Dead keys and keys without text: the host text is unknown from here on.
+        guard !text.isEmpty else {
+            closeInline()
+            return
+        }
+        let now = Date()
+        for char in text {
+            feed(.char(char, at: now))
+        }
+    }
+
+    private func feed(_ input: TriggerDetector.Input) {
+        switch detector.feed(input) {
+        case .none:
+            break
+        case .open:
+            DispatchQueue.main.async { [weak self] in self?.openInline() }
+        case .query:
+            // Searching is the costly part: kept out of the tap callback here. A pick or a move
+            // may still run it synchronously (`applyInlineQuery`), cheap for ~1.8k entries.
+            DispatchQueue.main.async { [weak self] in self?.applyInlineQuery() }
+        case .close:
+            hideInline()
+        }
     }
 
     /// Mouse events are never swallowed.
     private func handleMouseDown() {
-        // inline trigger (Phase 4): reset the detector here.
-        guard panel.isVisible, !panel.frame.contains(NSEvent.mouseLocation) else { return }
+        let mouse = NSEvent.mouseLocation
+        // A click on an inline cell confirms via `onConfirm`, which still needs the typed length.
+        if inlinePanel.isVisible, inlinePanel.frame.contains(mouse) { return }
+        cancelCaretLookup()
+        closeInline()
+        guard panel.isVisible, !panel.frame.contains(mouse) else { return }
         DispatchQueue.main.async { [weak self] in self?.panel.hide() }
+    }
+
+    // MARK: - Caret lookup
+
+    /// Locates the caret off the main thread, then shows the panel for `mode`
+    /// unless the lookup was cancelled or superseded meanwhile.
+    private func locateCaret(for mode: PickerMode) {
+        caretRequest += 1
+        let request = caretRequest
+        locatingCaret = mode
+        Task { @MainActor [weak self] in
+            // Off the main run loop, which also serves the event tap.
+            // `CaretLocator.axCaretRect` must stay read-only: it runs while the user keeps typing.
+            let axRect = await Task.detached(priority: .userInitiated) { CaretLocator.axCaretRect() }.value
+            guard let self, self.locatingCaret == mode, request == self.caretRequest else { return }
+            self.locatingCaret = nil
+            let caret = CaretLocator.screenRect(fromAX: axRect)
+            switch mode {
+            case .hotkey: self.showHotkeyPanel(at: caret)
+            case .inline: self.showInlinePanel(at: caret)
+            }
+        }
+    }
+
+    private func cancelCaretLookup() {
+        caretRequest += 1
+        locatingCaret = nil
     }
 
     // MARK: - Hotkey panel
 
     /// Pressing the hotkey while the caret lookup runs cancels the opening.
     private func toggleHotkeyPanel() {
-        caretRequest += 1
-        if locatingCaret || panel.mode == .hotkey {
-            locatingCaret = false
+        if locatingCaret == .hotkey || panel.mode == .hotkey {
+            cancelCaretLookup()
             panel.hide()
             return
         }
+        closeInline()
         targetApp = NSWorkspace.shared.frontmostApplication
-        // FastMoji itself frontmost (e.g. its popover): AX on our own main thread would block.
+        // FastMoji itself frontmost (e.g. its menubar popover): there is no host caret to find,
+        // and a pick is copied instead of inserted (see `deliver`).
         if targetApp?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
-            panel.show(at: CaretLocator.screenRect(fromAX: nil), mode: .hotkey)
+            cancelCaretLookup()
+            showHotkeyPanel(at: CaretLocator.screenRect(fromAX: nil))
             return
         }
-        locatingCaret = true
-        let request = caretRequest
-        Task { @MainActor [weak self] in
-            // Off the main run loop, which also serves the event tap.
-            let axRect = await Task.detached(priority: .userInitiated) { CaretLocator.axCaretRect() }.value
-            guard let self, self.locatingCaret, request == self.caretRequest else { return }
-            self.locatingCaret = false
-            self.panel.show(at: CaretLocator.screenRect(fromAX: axRect), mode: .hotkey)
-        }
+        locateCaret(for: .hotkey)
     }
 
-    /// Enter or click in the panel; the model has already recorded the pick in the history.
-    private func confirm(_ emoji: Emoji) {
-        // Phase 4: branch on `panel.mode` (read before hiding) for the inline action and deletion count.
+    private func showHotkeyPanel(at caret: NSRect) {
+        closeInline()
+        panel.show(at: caret, mode: .hotkey)
+    }
+
+    /// Enter or click in the hotkey panel; the model has already recorded the pick in the history.
+    private func confirmHotkey(_ emoji: Emoji) {
         panel.hide()
+        deliver(emoji, action: AppSettings.hotkeyAction, deleting: 0)
+    }
+
+    // MARK: - Inline panel
+
+    /// The detector saw the trigger sequence (async, outside the tap callback).
+    private func openInline() {
+        // A hotkey caret lookup in flight keeps its panel: never replace it with the inline one.
+        guard detector.isActive, !panel.isVisible, locatingCaret != .hotkey else { return }
+        // Input methods (Vietnamese Telex, Pinyin, ...) compose text in the host app: the tap sees
+        // raw keys, so the query and the deletion count would be wrong. Hotkey + menubar still work.
+        if Self.isInputMethodActive() {
+            _ = detector.feed(.reset)
+            return
+        }
+        targetApp = NSWorkspace.shared.frontmostApplication
+        locateCaret(for: .inline)
+    }
+
+    private func showInlinePanel(at caret: NSRect) {
+        // Closed while the caret was located (space, click, app switch, ...).
+        guard detector.isActive, !panel.isVisible else { return }
+        inlinePanel.show(at: caret, mode: .inline)
+        // `show` resets the model: re-apply what was typed during the lookup.
+        applyInlineQuery()
+    }
+
+    /// Mirrors the detector's query into the visible inline panel (no-op search if unchanged).
+    private func applyInlineQuery() {
+        guard inlinePanel.isVisible, detector.isActive else { return }
+        inlinePicker.query = detector.query.lowercased()
+        inlinePanel.setInlineQuery(triggerSequence + detector.query)
+    }
+
+    /// Hides the inline panel (or cancels its pending opening) without touching the detector.
+    private func hideInline() {
+        if locatingCaret == .inline { cancelCaretLookup() }
+        inlinePanel.hide()
+    }
+
+    /// Resets the detector and hides the inline panel; the host text is left as typed.
+    private func closeInline() {
+        _ = detector.feed(.reset)
+        hideInline()
+    }
+
+    /// Click on a cell of the inline panel; the model has already recorded the pick in the history.
+    private func confirmInline(_ emoji: Emoji) {
+        let typedLength = detector.typedLength
+        closeInline()
+        // Switched to an input method mid-query: the typed length is unknown, copy instead.
+        if Self.isInputMethodActive() {
+            targetApp = nil
+            EmojiInserter.copy(emoji.emoji)
+            return
+        }
+        deliver(emoji, action: AppSettings.inlineAction, deleting: typedLength, immediately: true)
+    }
+
+    // MARK: - Menubar
+
+    /// Called on every activation: the menubar popover may activate FastMoji itself.
+    private func rememberExternalApp() {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier
+        else { return }
+        lastExternalApp = app
+    }
+
+    /// Enter or click in the menubar popover (already closed); the model has recorded the pick.
+    /// Inserts into the app that was frontmost before the popover, copies when there is none.
+    func deliverMenubarPick(_ emoji: Emoji) {
+        let action = AppSettings.menubarAction
+        guard action != .copy, AXIsProcessTrusted(), let app = lastExternalApp, !app.isTerminated else {
+            EmojiInserter.copy(emoji.emoji)
+            return
+        }
+        targetApp = app
+        deliver(emoji, action: action, deleting: 0)
+    }
+
+    // MARK: - Delivery
+
+    /// Puts `emoji` into `targetApp` after deleting `count` typed characters (none for `.copy`).
+    /// `immediately`: `targetApp` still has the focus (inline panel), skip the reactivation delay.
+    private func deliver(_ emoji: Emoji, action: PickAction, deleting count: Int, immediately: Bool = false) {
         let target = targetApp
         targetApp = nil
-        if let target,
-           target.processIdentifier != NSWorkspace.shared.frontmostApplication?.processIdentifier {
+        // Picked from FastMoji's own window: there is no host field. Without Accessibility the
+        // synthesized keys are dropped. No target: nowhere safe to type. Copy so the emoji is not lost.
+        guard action != .copy, let target, AXIsProcessTrusted(),
+              target.processIdentifier != ProcessInfo.processInfo.processIdentifier
+        else {
+            EmojiInserter.copy(emoji.emoji)
+            return
+        }
+        if immediately {
+            Self.perform(action, emoji: emoji, deleting: count, into: target)
+            return
+        }
+        if target.processIdentifier != NSWorkspace.shared.frontmostApplication?.processIdentifier {
             target.activate()
         }
         Task { @MainActor in
             try? await Task.sleep(for: Self.insertionDelay)
-            EmojiInserter.perform(
-                AppSettings.hotkeyAction, emoji: emoji.emoji, deleting: 0, method: AppSettings.insertionMethod
-            )
+            Self.perform(action, emoji: emoji, deleting: count, into: target)
         }
+    }
+
+    /// Synthesizes the keys only if `target` is (still) frontmost, copies otherwise:
+    /// a focus change since the pick must never send backspaces to another app.
+    /// Checked again before a deferred paste (see `EmojiInserter.perform`).
+    private static func perform(_ action: PickAction, emoji: Emoji, deleting count: Int, into target: NSRunningApplication) {
+        let isTargetFrontmost: @MainActor () -> Bool = {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier
+        }
+        guard isTargetFrontmost() else {
+            EmojiInserter.copy(emoji.emoji)
+            return
+        }
+        EmojiInserter.perform(
+            action, emoji: emoji.emoji, deleting: count,
+            method: AppSettings.insertionMethod, isTargetFrontmost: isTargetFrontmost
+        )
+    }
+
+    /// True when an input method or input mode (not a plain keyboard layout) is selected.
+    private static func isInputMethodActive() -> Bool {
+        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let pointer = TISGetInputSourceProperty(source, kTISPropertyInputSourceType)
+        else { return false }
+        let type = Unmanaged<CFString>.fromOpaque(pointer).takeUnretainedValue()
+        return !CFEqual(type, kTISTypeKeyboardLayout)
     }
 }

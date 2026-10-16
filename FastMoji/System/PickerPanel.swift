@@ -42,28 +42,34 @@ final class PickerPanelState {
     var mode: PickerMode = .hotkey
     /// Text typed in the host app, trigger included (e.g. "::smi"); inline mode only.
     var inlineQuery = ""
-    /// Settings / Quit footer, shown when the menubar trigger is off (Phase 4).
+    /// Settings / Quit footer, shown when the menubar trigger is off.
     var showsAppButtons = false
+}
+
+/// Takes the first click: the inline panel is never key, so its buttons must act on that click.
+final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 /// Owns the single picker panel used by the hotkey and inline triggers.
 @MainActor
 final class PickerPanelController {
     private static let caretGap: CGFloat = 4
+    private static let cornerRadius: CGFloat = 12
 
     private let model: EmojiPickerModel
     private let state = PickerPanelState()
     private let panel = PickerPanel()
-    private let hostingView: NSHostingView<PanelContentView>
+    private let hostingView: FirstMouseHostingView<PanelContentView>
     private var resignKeyObserver: NSObjectProtocol?
 
     init(model: EmojiPickerModel) {
         self.model = model
         // Esc in hotkey mode: same as `hide()` (never `close()`, the panel is reused).
-        hostingView = NSHostingView(
+        hostingView = FirstMouseHostingView(
             rootView: PanelContentView(model: model, state: state) { [weak panel] in panel?.orderOut(nil) }
         )
-        panel.contentView = hostingView
+        panel.contentView = Self.makeBackground(hosting: hostingView)
         panel.setContentSize(hostingView.fittingSize)
 
         // Hotkey mode: cmd+tab, a Space switch or a click elsewhere takes the key status away.
@@ -76,6 +82,23 @@ final class PickerPanelController {
                 self.hide()
             }
         }
+    }
+
+    /// Vibrant background that stays active: a SwiftUI material renders flat in a window
+    /// that is never key in an app that is never active (the inline panel).
+    private static func makeBackground(hosting: NSView) -> NSVisualEffectView {
+        let background = NSVisualEffectView()
+        background.material = .popover
+        background.state = .active
+        background.blendingMode = .behindWindow
+        background.wantsLayer = true
+        background.layer?.cornerRadius = cornerRadius
+        background.layer?.cornerCurve = .continuous
+        background.layer?.masksToBounds = true
+        hosting.frame = background.bounds
+        hosting.autoresizingMask = [.width, .height]
+        background.addSubview(hosting)
+        return background
     }
 
     var isVisible: Bool { panel.isVisible }
@@ -97,6 +120,8 @@ final class PickerPanelController {
         model.reset()
         state.mode = mode
         state.inlineQuery = ""
+        // Normally already set by the coordinator; the footer must be in place before sizing.
+        state.showsAppButtons = !AppSettings.menubarEnabled
 
         hostingView.layoutSubtreeIfNeeded()
         let frame = Self.frame(size: hostingView.fittingSize, caret: caret)

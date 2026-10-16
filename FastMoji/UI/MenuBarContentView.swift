@@ -1,11 +1,14 @@
 import AppKit
 import SwiftUI
 
-/// Menubar popover: search field, shared emoji grid, About / Quit footer. Enter copies.
+/// Menubar popover: search field, shared emoji grid, Settings / About / Quit footer.
+/// Enter / click runs `AppSettings.menubarAction`.
 struct MenuBarContentView: View {
     let model: EmojiPickerModel
-    /// Nil while hosting unit tests.
-    let permission: AccessibilityPermission?
+    /// Nil while hosting unit tests (picks are copied).
+    let coordinator: AppCoordinator?
+
+    private var permission: AccessibilityPermission? { coordinator?.permission }
 
     @State private var window = WindowBox()
     @FocusState private var searchFocused: Bool
@@ -53,9 +56,13 @@ struct MenuBarContentView: View {
     /// Clears the query, refreshes "Frequently Used", scrolls to the top (via `reset()`) and wires Enter.
     private func prepareForOpen() {
         model.reset()
-        model.onConfirm = { emoji in
-            copy(emoji)
+        model.onConfirm = { [coordinator] emoji in
             close()
+            if let coordinator {
+                coordinator.deliverMenubarPick(emoji)
+            } else {
+                EmojiInserter.copy(emoji.emoji)
+            }
         }
     }
 
@@ -77,6 +84,7 @@ struct MenuBarContentView: View {
     private var footer: some View {
         HStack(spacing: 12) {
             Spacer()
+            Button("Settings") { showSettings() }
             Button("About") { showAbout() }
             Button("Quit") { NSApp.terminate(nil) }
         }
@@ -86,10 +94,10 @@ struct MenuBarContentView: View {
         .padding(.vertical, 6)
     }
 
-    private func copy(_ emoji: Emoji) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(emoji.emoji, forType: .string)
+    /// Closes the popover first, like `showAbout()`.
+    private func showSettings() {
+        close()
+        SettingsWindowController.shared.show()
     }
 
     /// Closes the popover first so its key monitor never sees keys meant for the About panel.

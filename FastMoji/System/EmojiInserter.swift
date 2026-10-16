@@ -12,30 +12,38 @@ enum EmojiInserter {
     private static let vKey: CGKeyCode = 9
     private static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
 
-    static func perform(_ action: PickAction, emoji: String, deleting n: Int, method: InsertionMethod) {
-        switch action {
-        case .insert:
-            insert(emoji, deleting: n, method: method)
-        case .copy:
+    /// The backspaces (and, for `.type`, the emoji keystroke) are posted synchronously: called
+    /// inside the tap callback, they must precede any key typed after the pick. `.paste` runs its
+    /// clipboard work on the next main-queue turn instead, since reading the clipboard can call
+    /// into the app that owns it; `isTargetFrontmost` is checked again there, and when the focus
+    /// moved meanwhile the emoji is only copied. Accepted trade-off: the backspaces are already
+    /// posted by then, so if the focus changed in that one-turn gap the typed trigger is deleted
+    /// but the emoji is not inserted (only copied).
+    static func perform(
+        _ action: PickAction,
+        emoji: String,
+        deleting n: Int,
+        method: InsertionMethod,
+        isTargetFrontmost: @escaping @MainActor () -> Bool
+    ) {
+        guard action != .copy else {
             copy(emoji)
-        case .insertAndCopy:
-            if method == .paste {
-                // The pasted emoji stays on the clipboard as the user's copy.
-                deleteBackward(n)
-                paste(emoji, keepOnClipboard: true)
-            } else {
-                insert(emoji, deleting: n, method: method)
-                copy(emoji)
-            }
+            return
         }
-    }
-
-    /// Deletes `n` characters before the caret, then inserts `emoji`.
-    static func insert(_ emoji: String, deleting n: Int, method: InsertionMethod) {
         deleteBackward(n)
         switch method {
-        case .type: type(emoji)
-        case .paste: paste(emoji, keepOnClipboard: false)
+        case .type:
+            type(emoji)
+            if action == .insertAndCopy { copy(emoji) }
+        case .paste:
+            DispatchQueue.main.async {
+                guard isTargetFrontmost() else {
+                    copy(emoji)
+                    return
+                }
+                // `.insertAndCopy`: the pasted emoji stays on the clipboard as the user's copy.
+                paste(emoji, keepOnClipboard: action == .insertAndCopy)
+            }
         }
     }
 
@@ -61,10 +69,13 @@ enum EmojiInserter {
     }
 
     /// Pastes via cmd+V. Unless `keepOnClipboard`, the emoji is marked transient and the
-    /// previous clipboard is restored after 300 ms (if nothing else changed it meanwhile).
+    /// previous clipboard is restored after 300 ms (if nothing else changed it meanwhile),
+    /// limited to `restorableTypes` plus the original `markerTypes`. When the previous clipboard
+    /// held items but none had restorable data, it is not restored (nor cleared): the transient
+    /// emoji stays on it.
     private static func paste(_ emoji: String, keepOnClipboard: Bool) {
         let pasteboard = NSPasteboard.general
-        let snapshot = keepOnClipboard ? [] : snapshotItems(of: pasteboard)
+        let snapshot = keepOnClipboard ? nil : snapshotItems(of: pasteboard)
 
         pasteboard.clearContents()
         pasteboard.setString(emoji, forType: .string)
@@ -73,7 +84,7 @@ enum EmojiInserter {
 
         postKey(vKey, flags: .maskCommand)
 
-        guard !keepOnClipboard else { return }
+        guard let snapshot else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(300))
             guard pasteboard.changeCount == changeCount else { return }
@@ -82,15 +93,45 @@ enum EmojiInserter {
         }
     }
 
-    /// Deep copy of every item and type currently on `pasteboard`.
-    private static func snapshotItems(of pasteboard: NSPasteboard) -> [NSPasteboardItem] {
-        (pasteboard.pasteboardItems ?? []).map { item in
+    /// Pasteboard types kept across a paste. Restricting reads to these common types reduces,
+    /// but does not eliminate, the risk of blocking the main thread: any of them may still be
+    /// lazily promised by the owning app, while app-private data and promised files, which
+    /// are more likely to be, are skipped.
+    private static let restorableTypes: [NSPasteboard.PasteboardType] = [
+        .string, .rtf, .html, .URL, .fileURL, .png, .tiff,
+    ]
+    /// nspasteboard.org markers (concealed, transient, auto-generated, source app), copied
+    /// as-is onto the restored item so clipboard managers keep honoring them (e.g. they do not
+    /// record a password-manager secret when it is written back).
+    private static let markerTypes: [NSPasteboard.PasteboardType] = [
+        "org.nspasteboard.ConcealedType",
+        "org.nspasteboard.TransientType",
+        "org.nspasteboard.AutoGeneratedType",
+        "org.nspasteboard.source",
+    ].map { NSPasteboard.PasteboardType($0) }
+    /// Larger data of a single type is not restored.
+    private static let maxRestoredDataSize = 10 * 1024 * 1024
+
+    /// Copy of the `restorableTypes` data (plus `markerTypes`) of every item on `pasteboard`;
+    /// items without restorable data are dropped. `[]` when the pasteboard is empty, `nil` when
+    /// it has items but none survive (nothing worth restoring).
+    private static func snapshotItems(of pasteboard: NSPasteboard) -> [NSPasteboardItem]? {
+        let items = pasteboard.pasteboardItems ?? []
+        let copies: [NSPasteboardItem] = items.compactMap { item in
             let copy = NSPasteboardItem()
-            for type in item.types {
-                if let data = item.data(forType: type) { copy.setData(data, forType: type) }
+            var isEmpty = true
+            for type in item.types where restorableTypes.contains(type) {
+                guard let data = item.data(forType: type), data.count <= maxRestoredDataSize else { continue }
+                copy.setData(data, forType: type)
+                isEmpty = false
+            }
+            guard !isEmpty else { return nil }
+            for type in item.types where markerTypes.contains(type) {
+                copy.setData(item.data(forType: type) ?? Data(), forType: type)
             }
             return copy
         }
+        return !items.isEmpty && copies.isEmpty ? nil : copies
     }
 
     /// Posts a tagged keyDown + keyUp pair to the HID event tap.

@@ -4,9 +4,11 @@ import SwiftUI
 @main
 struct FastMojiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    /// Menubar trigger on/off (Settings); off removes the status item.
+    @AppStorage(AppSettings.Key.menubarEnabled) private var menubarEnabled = true
 
     var body: some Scene {
-        MenuBarExtra {
+        MenuBarExtra(isInserted: $menubarEnabled) {
             MenuBarRoot(appDelegate: appDelegate)
         } label: {
             Image(systemName: "face.smiling")
@@ -22,7 +24,7 @@ private struct MenuBarRoot: View {
     var body: some View {
         MenuBarContentView(
             model: appDelegate.appState.menuBarPicker,
-            permission: appDelegate.coordinator?.permission
+            coordinator: appDelegate.coordinator
         )
     }
 }
@@ -39,7 +41,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Hosting unit tests: never quit the user's running copy.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         terminateOtherInstances()
-        coordinator = AppCoordinator(appState: appState)
+        let coordinator = AppCoordinator(appState: appState)
+        self.coordinator = coordinator
+        SettingsWindowController.shared.configure(frecency: appState.frecency, permission: coordinator.permission)
+    }
+
+    /// Reopening the app (Finder, Spotlight, `open`) shows Settings: the way back when the menubar is off.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        SettingsWindowController.shared.show()
+        return true
     }
 
     /// A fresh launch (Xcode cmd+R or /Applications) replaces any older running copy.

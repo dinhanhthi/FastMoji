@@ -23,14 +23,30 @@ struct PanelContentView: View {
             Divider()
             EmojiGridView(model: model)
             if state.showsAppButtons {
-                // Phase 4 wires the Settings / Quit buttons here.
-                EmptyView()
+                Divider()
+                appButtons
             }
         }
         .background(WindowAccessor(box: window))
-        .background(.regularMaterial, in: shape)
+        // The vibrant background is an `NSVisualEffectView` (see `PickerPanelController`).
         .clipShape(shape)
         .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+    }
+
+    /// Shown while the menubar is off: the only way to Settings / Quit besides reopening the app.
+    private var appButtons: some View {
+        HStack(spacing: 12) {
+            Spacer()
+            Button("Settings") {
+                onCancel()
+                SettingsWindowController.shared.show()
+            }
+            Button("Quit") { NSApp.terminate(nil) }
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 
     @ViewBuilder
