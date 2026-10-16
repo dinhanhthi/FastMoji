@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-16
+
 ### Added
 
 - Inline trigger: type `::` followed by a search term in any text field, then press Return or Tab to replace it with the emoji. The trigger sequence is customizable.
@@ -15,4 +17,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fuzzy search by name, alias and tag, with a "Frequently Used" section when the search is empty.
 - Insert, copy, or both, chosen per trigger; insert by typing or by pasting.
 - Launch at login, and an option to hide the menubar icon.
+- A skin tone setting for people and hand emoji.
 - Automatic update checks; "Check for Updates…" in Settings and an Update button in the menubar popover when a new version is available.
