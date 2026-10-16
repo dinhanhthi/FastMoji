@@ -145,11 +145,7 @@ struct SettingsView: View {
             }
             .disabled(!inlineEnabled)
         } header: {
-            Text("Inline")
-        } footer: {
-            Text("Type the trigger in any text field, keep typing to search, then press Return or Tab to insert. Paused while an input method such as Vietnamese Telex is active — use the hotkey instead.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            sectionHeader("Inline", description: "Type the trigger in any text field, keep typing to search, then press Return or Tab to insert. Paused while an input method such as Vietnamese Telex is active — use the hotkey instead.")
         }
 
         Section {
@@ -163,11 +159,7 @@ struct SettingsView: View {
             }
             .disabled(!hotkeyEnabled)
         } header: {
-            Text("Hotkey")
-        } footer: {
-            Text("Opens a search panel at the text caret in any app.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            sectionHeader("Hotkey", description: "Opens a search panel at the text caret in any app.")
         }
 
         Section {
@@ -176,15 +168,11 @@ struct SettingsView: View {
             actionPicker("Action", selection: $menubarAction)
                 .disabled(!menubarEnabled)
         } header: {
-            Text("Menubar")
-        } footer: {
-            Text(menubarFooter)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            sectionHeader("Menubar", description: menubarDescription)
         }
     }
 
-    private var menubarFooter: String {
+    private var menubarDescription: String {
         let base = "Click the menubar icon to search. When it is off, reopen FastMoji from Finder or Spotlight to get back here."
         return enabledTriggerCount == 1 ? base + " At least one trigger must stay on." : base
     }
@@ -221,6 +209,18 @@ struct SettingsView: View {
             AppSettings.triggerSequence = triggerDraft
         } else {
             triggerDraft = AppSettings.triggerSequence
+        }
+    }
+
+    /// Section title with its description right below it (not in the footer, far from the title).
+    private func sectionHeader(_ title: String, description: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            Text(description)
+                .font(.caption)
+                .fontWeight(.regular)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -270,11 +270,7 @@ struct SettingsView: View {
             }
             .pickerStyle(.radioGroup)
         } header: {
-            Text("Method")
-        } footer: {
-            Text("How FastMoji puts the emoji into the app you are typing in, when a trigger's action is Insert or Insert & Copy.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            sectionHeader("Method", description: "How FastMoji puts the emoji into the app you are typing in, when a trigger's action is Insert or Insert & Copy.")
         }
     }
 
@@ -346,11 +342,7 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
         } header: {
-            Text("Emoji")
-        } footer: {
-            Text("Applies to people, hands and body parts. Smileys have no skin tone in Unicode and stay yellow.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            sectionHeader("Emoji", description: "Applies to people, hands and body parts. Smileys have no skin tone in Unicode and stay yellow.")
         }
     }
 
