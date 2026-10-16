@@ -178,20 +178,27 @@ extension View {
 
 /// Capsule with hover and pressed feedback, for the footer buttons (`.bordered` has no hover state).
 struct HoverCapsuleButtonStyle: ButtonStyle {
+    /// Icon-only buttons: a fixed square, which the capsule turns into a circle.
+    var isCircle = false
+
     func makeBody(configuration: Configuration) -> some View {
-        HoverCapsule(configuration: configuration)
+        HoverCapsule(configuration: configuration, isCircle: isCircle)
     }
 
     private struct HoverCapsule: View {
         let configuration: ButtonStyleConfiguration
+        let isCircle: Bool
         @State private var isHovered = false
+
+        private static let circleSize: CGFloat = 26
 
         var body: some View {
             let fill = configuration.isPressed ? 0.24 : isHovered ? 0.16 : 0.07
             configuration.label
                 .font(.callout)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 4)
+                .padding(.horizontal, isCircle ? 0 : 11)
+                .padding(.vertical, isCircle ? 0 : 4)
+                .frame(width: isCircle ? Self.circleSize : nil, height: isCircle ? Self.circleSize : nil)
                 .background(Capsule().fill(Color.primary.opacity(fill)))
                 .overlay(Capsule().strokeBorder(Color.primary.opacity(isHovered ? 0.22 : 0.1), lineWidth: 1))
                 .contentShape(Capsule())

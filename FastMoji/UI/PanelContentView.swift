@@ -47,7 +47,7 @@ struct PanelContentView: View {
             }
             .help("Quit FastMoji")
         }
-        .buttonStyle(HoverCapsuleButtonStyle())
+        .buttonStyle(HoverCapsuleButtonStyle(isCircle: true))
     }
 
     /// The panel never activates FastMoji: activate it so the alert is frontmost and takes keys.
