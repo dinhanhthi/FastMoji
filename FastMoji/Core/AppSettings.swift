@@ -122,6 +122,7 @@ enum AppSettings {
         static let customAliases = "customAliases"
         static let pausedUntil = "pausedUntil"
         static let emoticonsEnabled = "emoticonsEnabled"
+        static let textArrowsEnabled = "textArrowsEnabled"
         static let welcomeShown = "welcomeShown"
     }
 
@@ -149,6 +150,7 @@ enum AppSettings {
             Key.customAliases: encode([CustomAlias]()) ?? Data(),
             Key.pausedUntil: 0.0,
             Key.emoticonsEnabled: false,
+            Key.textArrowsEnabled: false,
             Key.welcomeShown: false,
         ]
     }
@@ -255,10 +257,17 @@ enum AppSettings {
         set { store.set(encode(validCustomAliases(newValue)), forKey: Key.customAliases) }
     }
 
-    /// Converts emoticons typed as a word (`:)` + space → 🙂). Off by default.
+    /// Converts emoticons typed as a word (`:)` → 🙂, see `EmoticonDetector`). Off by default.
     static var emoticonsEnabled: Bool {
         get { store.bool(forKey: Key.emoticonsEnabled) }
         set { store.set(newValue, forKey: Key.emoticonsEnabled) }
+    }
+
+    /// Converts text arrows typed as a word (`->` → →, see `EmoticonDetector.arrows`). Off by
+    /// default: they also show up in code.
+    static var textArrowsEnabled: Bool {
+        get { store.bool(forKey: Key.textArrowsEnabled) }
+        set { store.set(newValue, forKey: Key.textArrowsEnabled) }
     }
 
     /// The welcome window was shown once (new installs and 0.1.x upgraders alike start at false).

@@ -16,9 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Symbols (macOS keys `⌘` `⌥` `⇧` `⌃`, arrows, currency, math, typography) and kaomoji, with Emoji / Symbols / Kaomoji tabs and a category bar to jump between sections.
 - Search in English, Vietnamese, French and Spanish, with accents optional (e.g. `::cuoi`).
 - Emoji up to Unicode 17. Only the emoji your macOS version can display are shown.
-- Emoticon conversion: `:)` typed after a space and followed by a space becomes 🙂. Off by default; turn it on in Settings → Triggers.
+- Emoticon conversion: emoticons that end with a symbol, like `:)` `;)` `:(` `:'(` `:|` `^^`, become emoji as soon as you type them; those that end with a letter or digit, like `:D` `:P` `:O` `xD` `<3` `</3`, convert when followed by a space or punctuation (not Return). An emoticon must start after a space, an opening bracket or quote, a new line, or a pause. It is never converted inside inline code (between backticks), in password fields, in ignored apps and websites, or while an input method is active. Press Backspace right after a conversion to get the typed text back. Off by default; turn it on in Settings → Triggers.
+- Text arrows: `->` becomes →, `=>` ⇒, `<-` ←, `<->` ↔ and `<=>` ⇔, with the same rules as emoticons and the same Backspace undo. Off by default; turn it on in Settings → Triggers. It also changes code such as `=>` and `->`.
 - Pause FastMoji for 1 hour from the menubar popover; a Paused row shows when it ends and has a Resume button.
-- Password fields are skipped: the inline trigger, the hotkey and emoticon conversion do nothing there.
+- Password fields are skipped: the inline trigger, the hotkey, emoticon conversion and text arrows do nothing there.
 - Secure Input indicator: while another app turns on Secure Input, the menubar icon shows a lock and the popover says the typing triggers are paused.
 - A welcome window, shown once after installing or updating, with the three ways to use FastMoji, the Accessibility status and a test field.
 - Settings → General: a "Show Welcome…" button to open the welcome window again.

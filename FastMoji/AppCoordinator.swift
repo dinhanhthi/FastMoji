@@ -37,12 +37,26 @@ final class AppCoordinator {
     @ObservationIgnored private var ignoredDomains = AppSettings.ignoredDomains
     @ObservationIgnored private var customAliases = AppSettings.customAliases
     @ObservationIgnored private var emoticonsEnabled = AppSettings.emoticonsEnabled
+    @ObservationIgnored private var textArrowsEnabled = AppSettings.textArrowsEnabled
     @ObservationIgnored private var detector: TriggerDetector
-    @ObservationIgnored private var emoticons = EmoticonDetector()
+    /// Converts emoticons and/or text arrows, built from the enabled tables.
+    @ObservationIgnored private var emoticons: EmoticonDetector
     /// Bumped per emoticon candidate: a focus check that finishes late never approves a later one.
     @ObservationIgnored private var emoticonRequest = 0
     /// Request id whose focus check passed (no password field, no ignored website), nil when none.
     @ObservationIgnored private var emoticonApproved: Int?
+    /// The last conversion posted, so the Backspace right after may undo it; nil when none.
+    @ObservationIgnored private var emoticonUndo: EmoticonUndo?
+
+    /// What a Backspace undo checks again before posting keys.
+    private struct EmoticonUndo {
+        /// Request id of the conversion's candidate: a newer candidate makes it stale.
+        let request: Int
+        /// App the conversion was typed into: the undo goes to the same app only.
+        let pid: pid_t
+        /// The conversion was pasted on the next main-queue turn: the undo must queue behind it.
+        let usedPaste: Bool
+    }
 
     /// App that was frontmost when a panel opened; receives the emoji.
     @ObservationIgnored private var targetApp: NSRunningApplication?
@@ -95,6 +109,7 @@ final class AppCoordinator {
         picker = appState.makePicker()
         panel = PickerPanelController(model: picker)
         detector = Self.makeDetector(sequence: AppSettings.triggerSequence, windowMs: AppSettings.triggerWindowMs)
+        emoticons = Self.makeEmoticons(emoticons: AppSettings.emoticonsEnabled, arrows: AppSettings.textArrowsEnabled)
 
         picker.onConfirm = { [weak self] emoji in
             guard let self else { return }
@@ -137,12 +152,20 @@ final class AppCoordinator {
         TriggerDetector(sequence: sequence, keyWindow: TimeInterval(windowMs) / 1000)
     }
 
+    /// One detector for both typed conversions; an empty table while both are off.
+    private static func makeEmoticons(emoticons: Bool, arrows: Bool) -> EmoticonDetector {
+        var entries: [String: String] = [:]
+        if emoticons { entries.merge(EmoticonDetector.emoticons) { current, _ in current } }
+        if arrows { entries.merge(EmoticonDetector.arrows) { current, _ in current } }
+        return EmoticonDetector(entries: entries)
+    }
+
     // MARK: - Tap lifecycle
 
     /// Runs the tap while Accessibility is granted, a tap-driven feature is enabled and not paused.
     private func updateTap() {
         // `AXIsProcessTrusted()` too: `permission` stops polling once trusted, so it misses a revoke.
-        guard permission.isTrusted, AXIsProcessTrusted(), inlineEnabled || hotkeyEnabled || emoticonsEnabled,
+        guard permission.isTrusted, AXIsProcessTrusted(), inlineEnabled || hotkeyEnabled || emoticonsEnabled || textArrowsEnabled,
               !isPaused
         else {
             if tap.isRunning { tap.stop() }
@@ -249,9 +272,13 @@ final class AppCoordinator {
         }
 
         let emoticonsOn = AppSettings.emoticonsEnabled
-        if emoticonsOn != emoticonsEnabled {
-            _ = emoticons.feed(.reset)
+        let arrowsOn = AppSettings.textArrowsEnabled
+        if emoticonsOn != emoticonsEnabled || arrowsOn != textArrowsEnabled {
+            // A new detector: no candidate and no conversion to undo carry over.
+            emoticons = Self.makeEmoticons(emoticons: emoticonsOn, arrows: arrowsOn)
+            emoticonUndo = nil
             emoticonsEnabled = emoticonsOn
+            textArrowsEnabled = arrowsOn
         }
 
         let apps = Set(AppSettings.ignoredApps)
@@ -315,13 +342,13 @@ final class AppCoordinator {
             return true
         }
 
-        guard inlineEnabled || emoticonsEnabled else { return false }
+        guard inlineEnabled || emoticonsEnabled || textArrowsEnabled else { return false }
         return handleInlineKey(event, keyCode: keyCode, isRepeat: isRepeat)
     }
 
     /// Feeds the trigger and emoticon detectors; swallows only navigation / confirm keys of a visible
-    /// inline panel, the closing delimiter of an exact `::alias:` pick and the space of a converted
-    /// emoticon.
+    /// inline panel, the closing delimiter of an exact `::alias:` pick, the last key or terminator
+    /// of a converted emoticon or arrow, and the Backspace that undoes it.
     private func handleInlineKey(_ event: CGEvent, keyCode: UInt16, isRepeat: Bool) -> Bool {
         // Typed into FastMoji's own windows (hotkey panel, menubar popover, Settings): not a
         // host-app trigger. Except the welcome window's test field, a real host field on purpose.
@@ -354,7 +381,7 @@ final class AppCoordinator {
             feedEmoticon(.boundary(at: now))
         case KeyCode.backspace:
             feed(.backspace(at: now))
-            feedEmoticon(.backspace(at: now), duringQuery: wasActive || detector.isActive)
+            return feedEmoticon(.backspace(at: now), duringQuery: wasActive || detector.isActive)
         // Tab may autocomplete (e.g. `std` -> `std::`): what precedes the caret is unknown.
         case KeyCode.left, KeyCode.right, KeyCode.down, KeyCode.up,
              KeyCode.home, KeyCode.end, KeyCode.pageUp, KeyCode.pageDown,
@@ -423,7 +450,8 @@ final class AppCoordinator {
         return true
     }
 
-    /// Returns true to swallow the event (an exact `::alias:` pick).
+    /// Returns true to swallow the event (an exact `::alias:` pick, or the key that completes an
+    /// emoticon or arrow conversion).
     private func feedCharacters(of event: CGEvent) -> Bool {
         var length = 0
         var buffer = [UniChar](repeating: 0, count: 8)
@@ -437,16 +465,18 @@ final class AppCoordinator {
             return false
         }
         let now = Date()
-        // An exact pick swallows the whole event: only when the delimiter is its only character,
-        // so no other typed character is lost and `typedLength` matches what reached the host.
-        let allowsPick = text.count == 1
+        // A pick or a conversion swallows the whole event: only when its key is the only character,
+        // so no other typed character is lost and the deletion count matches what reached the host.
+        let allowsSwallow = text.count == 1
         var swallow = false
         for char in text {
             let wasActive = detector.isActive
-            swallow = feed(.char(char, at: now), allowsPick: allowsPick)
+            swallow = feed(.char(char, at: now), allowsPick: allowsSwallow)
             // A pick already reset both detectors (`closeInline`).
             if !swallow {
-                feedEmoticon(.char(char, at: now), duringQuery: wasActive || detector.isActive)
+                swallow = feedEmoticon(
+                    .char(char, at: now), duringQuery: wasActive || detector.isActive, allowsConvert: allowsSwallow
+                )
             }
         }
         return swallow
@@ -500,15 +530,20 @@ final class AppCoordinator {
 
     // MARK: - Emoticons
 
-    /// Returns true to swallow the key, only for the space of a converted emoticon.
+    /// Returns true to swallow the key: the key that completes a conversion (its last key or its
+    /// terminator), or the Backspace that undoes one.
     /// `duringQuery`: the trigger detector was or is active around this key, so the key belongs to
     /// an inline query: the emoticon detector is reset instead, and `::` queries are never touched.
     /// "Matching" alone does not count: with `::`, the first `:` of `:)` always starts a match.
+    /// `allowsConvert`: false when the key event typed more than one character, which must not
+    /// be swallowed (the other characters would be lost).
     @discardableResult
-    private func feedEmoticon(_ input: EmoticonDetector.Input, duringQuery: Bool = false) -> Bool {
-        guard emoticonsEnabled else { return false }
+    private func feedEmoticon(
+        _ input: EmoticonDetector.Input, duringQuery: Bool = false, allowsConvert: Bool = true
+    ) -> Bool {
+        guard emoticonsEnabled || textArrowsEnabled else { return false }
         if duringQuery || detector.isActive {
-            _ = emoticons.feed(.reset)
+            _ = emoticons.feed(.reset(at: Date()))
             return false
         }
         switch emoticons.feed(input) {
@@ -517,8 +552,10 @@ final class AppCoordinator {
         case .candidate:
             checkEmoticonField()
             return false
-        case let .convert(emoji, typedLength):
-            return convertEmoticon(emoji, deleting: typedLength)
+        case let .convert(conversion):
+            return allowsConvert && convertEmoticon(conversion)
+        case let .revert(deleting, text):
+            return revertEmoticon(deleting: deleting, text: text)
         }
     }
 
@@ -543,29 +580,75 @@ final class AppCoordinator {
         }
     }
 
-    /// The space after an exact emoticon, decided synchronously in the tap callback. Returns false,
-    /// touching nothing, when it cannot: the space then reaches the host and the text stays as typed.
-    /// Always inserts (the pick actions do not apply: the conversion replaces text in place) and
-    /// records nothing in the history: a conversion is not a pick.
-    private func convertEmoticon(_ emoji: String, deleting typedLength: Int) -> Bool {
+    /// The key that completes an emoticon or arrow, decided synchronously in the tap callback.
+    /// Returns false, touching nothing, when it cannot: the key then reaches the host and the text
+    /// stays as typed. Always inserts (the pick actions do not apply: the conversion replaces text in
+    /// place) and records nothing in the history: a conversion is not a pick.
+    private func convertEmoticon(_ conversion: EmoticonDetector.Conversion) -> Bool {
+        emoticonUndo = nil
         // Focus check not finished (typed fast) or failed: leave the text rather than guess.
         // Input methods compose text in the host: the typed length is unknown, delete nothing.
         // Secure Input on: the check is stale, never post keys. Ignored apps bailed in `handleKeyDown`.
         // FastMoji itself frontmost: only its welcome test field converts.
         guard emoticonApproved == emoticonRequest, !isPaused,
               !Self.isInputMethodActive(), !IsSecureEventInputEnabled(), AXIsProcessTrusted(),
-              let target = NSWorkspace.shared.frontmostApplication,
-              target.processIdentifier != ProcessInfo.processInfo.processIdentifier
-                || WelcomeWindowController.shared.isTestFieldFocused
+              let target = emoticonTarget(pid: nil)
         else { return false }
         emoticonApproved = nil
+        let method = AppSettings.insertionMethod
+        let pid = target.processIdentifier
         // The backspaces and the text are posted inside the callback, as in `pickInlineSelection`:
-        // the swallowed space is typed again after the emoji.
+        // the swallowed key (last key or terminator) is part of `emitted` when it must be typed.
         EmojiInserter.perform(
-            .insert, emoji: emoji + " ", deleting: typedLength, method: AppSettings.insertionMethod,
-            isTargetFrontmost: { NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier }
+            .insert, emoji: conversion.emitted, deleting: conversion.deleting, method: method,
+            isTargetFrontmost: { NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
         )
+        emoticonUndo = EmoticonUndo(request: emoticonRequest, pid: pid, usedPaste: method == .paste)
+        emoticons.recordConversion(conversion, at: Date())
         return true
+    }
+
+    /// The Backspace right after a conversion: deletes the emitted text and types the typed form
+    /// back, decided synchronously in the tap callback with every guard of the conversion checked
+    /// again. Returns false, touching nothing, when it cannot: the Backspace then reaches the host.
+    private func revertEmoticon(deleting count: Int, text: String) -> Bool {
+        guard let undo = emoticonUndo else { return false }
+        emoticonUndo = nil
+        guard undo.request == emoticonRequest, !isPaused,
+              !Self.isInputMethodActive(), !IsSecureEventInputEnabled(), AXIsProcessTrusted(),
+              emoticonTarget(pid: undo.pid) != nil
+        else { return false }
+        let isTargetFrontmost: @MainActor () -> Bool = {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == undo.pid
+        }
+        guard undo.usedPaste else {
+            // Typed text: plain keys, never the clipboard (the typed form is short ASCII).
+            EmojiInserter.perform(
+                .insert, emoji: text, deleting: count, method: .type, isTargetFrontmost: isTargetFrontmost
+            )
+            return true
+        }
+        // The pasted conversion may still be queued on the main queue: queue the undo behind it,
+        // so its backspaces never land before the paste. Accepted trade-off: if the focus changes
+        // within that one main-queue turn, the undo is dropped and the swallowed Backspace is lost.
+        DispatchQueue.main.async {
+            guard isTargetFrontmost() else { return }
+            EmojiInserter.perform(
+                .insert, emoji: text, deleting: count, method: .type, isTargetFrontmost: isTargetFrontmost
+            )
+        }
+        return true
+    }
+
+    /// The frontmost app when keys may be posted into it for a conversion or its undo: never
+    /// FastMoji itself, except its welcome test field. `pid`: the app must be that one too.
+    private func emoticonTarget(pid: pid_t?) -> NSRunningApplication? {
+        guard let target = NSWorkspace.shared.frontmostApplication,
+              pid == nil || target.processIdentifier == pid,
+              target.processIdentifier != ProcessInfo.processInfo.processIdentifier
+                || WelcomeWindowController.shared.isTestFieldFocused
+        else { return nil }
+        return target
     }
 
     /// Mouse events are never swallowed.
@@ -721,7 +804,9 @@ final class AppCoordinator {
     /// app switch, click, navigation or modified key, ...), so it resets the emoticon detector too.
     private func closeInline() {
         _ = detector.feed(.reset)
-        _ = emoticons.feed(.reset)
+        // Also drops the conversion a Backspace could undo.
+        _ = emoticons.feed(.reset(at: Date()))
+        emoticonUndo = nil
         hideInline()
     }
 

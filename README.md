@@ -32,7 +32,8 @@ In Cocoa apps, `⌘;` replaces the "Check Document Now" shortcut (Edit → Spell
 - Insert, copy, or both, chosen per trigger
 - Customizable inline trigger and hotkey
 - Insert by typing or by pasting
-- Optional emoticon conversion, e.g. `:)` → 🙂 (off by default, Settings → Triggers)
+- Optional emoticon conversion, e.g. `:)` → 🙂 as you type it, `:D` → 😃 after a space or punctuation; Backspace right after undoes it (off by default, Settings → Triggers)
+- Optional text arrows, e.g. `->` → →, `<=>` → ⇔; Backspace right after undoes it (off by default, Settings → Triggers; it also changes code)
 - Ignore FastMoji in chosen apps (inline trigger and hotkey) and on chosen websites (inline trigger)
 - Pause FastMoji for 1 hour from the menubar
 - Password fields are skipped

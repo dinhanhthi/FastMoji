@@ -20,6 +20,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.menubarEnabled) private var menubarEnabled = true
     @AppStorage(AppSettings.Key.menubarAction) private var menubarAction = PickAction.copy
     @AppStorage(AppSettings.Key.emoticonsEnabled) private var emoticonsEnabled = false
+    @AppStorage(AppSettings.Key.textArrowsEnabled) private var textArrowsEnabled = false
     @AppStorage(AppSettings.Key.insertionMethod) private var insertionMethod = InsertionMethod.type
     @AppStorage(AppSettings.Key.skinTone) private var skinTone = SkinTone.none
 
@@ -202,8 +203,17 @@ struct SettingsView: View {
         Section {
             // Verbatim: keeps ":)" out of Markdown and localization.
             Toggle(isOn: $emoticonsEnabled) { Text(verbatim: "Convert emoticons like :) to emoji") }
+            Toggle(isOn: $textArrowsEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: "Convert text arrows like -> to →")
+                    Text(verbatim: "Also changes code such as => and -> in editors; add them to Ignored or press Backspace to undo.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         } header: {
-            sectionHeader("Emoticons", description: "Typed after a space, followed by a space: :) :( :D ;) :P <3 and more. Off by default.")
+            sectionHeader("Emoticons", description: "Emoticons like :) ;) convert as you type them; :D, xD and <3 after a space or punctuation. Text arrows: -> => <- <-> <=>. Backspace right after a conversion undoes it. Off by default.")
         }
     }
 
