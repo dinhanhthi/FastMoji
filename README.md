@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/new_logo_256.png" width="128" alt="FastMoji logo">
+  <img src="assets/new_logo.icon/Assets/only_object.png" width="128" alt="FastMoji logo">
 </p>
 
 <h1 align="center">FastMoji</h1>
