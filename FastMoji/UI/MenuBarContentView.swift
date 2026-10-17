@@ -47,6 +47,9 @@ struct MenuBarContentView: View {
         }
         .frame(width: 360)
         .capsuleButtons()
+        // The system popover glass is too see-through to read text over a busy screen: back it
+        // with the window color (dark in dark mode, light in light mode), mostly opaque.
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.8))
         .background(WindowAccessor(box: window))
         .pickerKeyMonitor(model, window: window) { close() }
         // First open (the window may become key before the accessor has captured it).
