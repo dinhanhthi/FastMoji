@@ -23,6 +23,9 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.textArrowsEnabled) private var textArrowsEnabled = false
     @AppStorage(AppSettings.Key.insertionMethod) private var insertionMethod = InsertionMethod.type
     @AppStorage(AppSettings.Key.skinTone) private var skinTone = SkinTone.none
+    @AppStorage(AppSettings.Key.emojiKindEnabled) private var emojiKindEnabled = true
+    @AppStorage(AppSettings.Key.symbolsKindEnabled) private var symbolsKindEnabled = true
+    @AppStorage(AppSettings.Key.kaomojiKindEnabled) private var kaomojiKindEnabled = true
 
     /// Edited text of the trigger field; committed on Return or blur, never while typing
     /// (editing "::" to ";;" must not save ":" on the way).
@@ -40,6 +43,8 @@ struct SettingsView: View {
     @State private var customAliases = AppSettings.customAliases
     @State private var aliasDraft = ""
     @State private var aliasTextDraft = ""
+    /// Alias of the entry the form is editing (its original name, kept through a rename); nil when adding.
+    @State private var editingAlias: String?
 
     /// Same bounds as the stored value's clamp.
     private static let triggerWindowSlider = Double(AppSettings.triggerWindowRange.lowerBound)...Double(AppSettings.triggerWindowRange.upperBound)
@@ -84,6 +89,11 @@ struct SettingsView: View {
                 }
             }
             .formStyle(.grouped)
+            // The transparent title bar's safe area (32 pt) plus the grouped Form's own top margin
+            // (20 pt) left 52 pt above the first section. Run under the title bar (the detail column
+            // is clear of the traffic lights) and add back 6 pt: 26 pt, half of it.
+            .ignoresSafeArea(.container, edges: .top)
+            .contentMargins(.top, 6, for: .scrollContent)
             .toggleStyle(LightSwitchToggleStyle())
             .navigationTitle((pane ?? .general).title)
         }
@@ -333,6 +343,30 @@ struct SettingsView: View {
     @ViewBuilder
     private var aliases: some View {
         Section {
+            TextField("Alias", text: $aliasDraft, prompt: Text("shrug"))
+                .onSubmit { commitAlias() }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    // Verbatim: as Markdown, the backslash would be dropped.
+                    TextField("Text", text: $aliasTextDraft, prompt: Text(verbatim: "¯\\_(ツ)_/¯"))
+                        .onSubmit { commitAlias() }
+                    if editingAlias != nil {
+                        Button("Cancel") { cancelAliasEdit() }
+                    }
+                    Button(editingAlias == nil ? "Add" : "Update") { commitAlias() }
+                        .disabled(!canAddAlias)
+                }
+                if let aliasDraftError {
+                    Text(aliasDraftError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+        } header: {
+            sectionHeader("Custom aliases", description: aliasesDescription)
+        }
+
+        Section("Your aliases") {
             if customAliases.isEmpty {
                 Text("None")
                     .foregroundStyle(.secondary)
@@ -347,27 +381,13 @@ struct SettingsView: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer()
-                    removeButton { setCustomAliases(customAliases.filter { $0.alias != entry.alias }) }
+                    editButton { editAlias(entry) }
+                    removeButton {
+                        if entry.alias == editingAlias { cancelAliasEdit() }
+                        setCustomAliases(customAliases.filter { $0.alias != entry.alias })
+                    }
                 }
             }
-            TextField("Alias", text: $aliasDraft, prompt: Text("shrug"))
-                .onSubmit { addAlias() }
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    // Verbatim: as Markdown, the backslash would be dropped.
-                    TextField("Text", text: $aliasTextDraft, prompt: Text(verbatim: "¯\\_(ツ)_/¯"))
-                        .onSubmit { addAlias() }
-                    Button("Add") { addAlias() }
-                        .disabled(!canAddAlias)
-                }
-                if let aliasDraftError {
-                    Text(aliasDraftError)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-            }
-        } header: {
-            sectionHeader("Custom aliases", description: aliasesDescription)
         }
     }
 
@@ -393,8 +413,9 @@ struct SettingsView: View {
             if alias.count > TriggerDetector.maxQueryLength || !alias.allSatisfy(TriggerDetector.isQueryCharacter) {
                 return "Alias: 1 to \(TriggerDetector.maxQueryLength) letters (a-z), digits, _ - or +."
             }
-            if customAliases.contains(where: { $0.alias == alias }) {
-                return "\"\(alias)\" already exists. Remove it first to change its text."
+            // The entry being edited may keep its own name.
+            if alias != editingAlias, customAliases.contains(where: { $0.alias == alias }) {
+                return "\"\(alias)\" already exists. Edit it to change its text."
             }
         }
         let text = aliasTextDraft
@@ -412,9 +433,34 @@ struct SettingsView: View {
         return nil
     }
 
-    private func addAlias() {
+    /// Adds the draft, or while editing replaces the edited entry in place (a rename keeps its position).
+    private func commitAlias() {
         guard canAddAlias else { return }
-        setCustomAliases(customAliases + [CustomAlias(alias: normalizedAliasDraft, text: aliasTextDraft)])
+        let entry = CustomAlias(alias: normalizedAliasDraft, text: aliasTextDraft)
+        var updated = customAliases
+        if let editingAlias {
+            guard let index = updated.firstIndex(where: { $0.alias == editingAlias }) else {
+                cancelAliasEdit()
+                return
+            }
+            updated[index] = entry
+        } else {
+            updated.append(entry)
+        }
+        setCustomAliases(updated)
+        cancelAliasEdit()
+    }
+
+    /// Fills the form with an existing entry and switches its button to Update.
+    private func editAlias(_ entry: CustomAlias) {
+        editingAlias = entry.alias
+        aliasDraft = entry.alias
+        aliasTextDraft = entry.text
+    }
+
+    /// Leaves editing mode (if any) and clears the form.
+    private func cancelAliasEdit() {
+        editingAlias = nil
         aliasDraft = ""
         aliasTextDraft = ""
     }
@@ -489,6 +535,14 @@ struct SettingsView: View {
         } else {
             Label(bundleID, systemImage: "app.dashed")
         }
+    }
+
+    private func editButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "pencil")
+        }
+        .buttonStyle(.borderless)
+        .help("Edit")
     }
 
     private func removeButton(action: @escaping () -> Void) -> some View {
@@ -582,6 +636,17 @@ struct SettingsView: View {
         }
 
         Section {
+            Toggle("Emoji", isOn: $emojiKindEnabled)
+                .disabled(isLastKind(emojiKindEnabled))
+            Toggle("Symbols", isOn: $symbolsKindEnabled)
+                .disabled(isLastKind(symbolsKindEnabled))
+            Toggle("Kaomoji", isOn: $kaomojiKindEnabled)
+                .disabled(isLastKind(kaomojiKindEnabled))
+        } header: {
+            sectionHeader("Content", description: "Turned-off kinds are hidden from the pickers and search. Your custom aliases always work.")
+        }
+
+        Section {
             Picker("Skin tone", selection: $skinTone) {
                 ForEach(SkinTone.allCases) { tone in
                     Text(Self.toneSample.toned(tone))
@@ -593,6 +658,15 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Emoji", description: "Applies to people, hands and body parts. Smileys have no skin tone in Unicode and stay yellow.")
         }
+    }
+
+    private var enabledKindCount: Int {
+        [emojiKindEnabled, symbolsKindEnabled, kaomojiKindEnabled].filter { $0 }.count
+    }
+
+    /// Lock-out guard: the last enabled kind cannot be turned off.
+    private func isLastKind(_ enabled: Bool) -> Bool {
+        enabled && enabledKindCount == 1
     }
 
     /// 👋 shown in each tone by the skin tone picker.

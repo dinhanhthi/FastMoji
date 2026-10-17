@@ -53,7 +53,7 @@ struct EmojiSearchTests {
 
     @Test("scattered letters inside a word don't match: yeet does not find lady_beetle")
     func scatteredLettersDoNotMatch() {
-        let ladyBeetle = emoji("🐞", "lady beetle", aliases: ["lady_beetle"])
+        let ladyBeetle = emoji("🐞", "lady beetle", aliases: ["lady_beetle"], keywords: ["ladybird"])
         let search = EmojiSearch(catalog: [ladyBeetle])
 
         let results = search.search("yeet", frecency: { _ in 0 })
@@ -61,6 +61,26 @@ struct EmojiSearchTests {
         #expect(results.isEmpty)
         // A contiguous in-word match still matches.
         #expect(search.search("eetle", frecency: { _ in 0 }).map(\.emoji) == ["🐞"])
+        // A keyword needs a contiguous match even from a word start: `lbd` is scattered in
+        // "ladybird" (and matches nothing else), while the prefix `ladybi` still matches; it only
+        // exists in the keyword (no "i" in "lady beetle" / "lady_beetle").
+        #expect(["lbd", "ladybi"].map { search.search($0, frecency: { _ in 0 }).count } == [0, 1])
+    }
+
+    @Test("a turned-off kind is hidden from search and exactMatch, but a custom alias still finds it")
+    func turnedOffKindIsHiddenExceptCustomAlias() {
+        let cat = emoji("🐱", "cat face", aliases: ["cat"])
+        var command = emoji("⌘", "place of interest sign", aliases: ["cmd"])
+        command.kind = .symbol
+        let index = CatalogIndex(catalog: [cat, command])
+        let plain = EmojiSearch(index: index)
+        let custom = EmojiSearch(index: index, customAliases: [CustomAlias(alias: "cmd", text: "⌘")])
+
+        #expect(plain.search("cmd", frecency: { _ in 0 }).map(\.emoji) == ["⌘"]) // found with every kind on
+        #expect(plain.search("cmd", kinds: [.emoji], frecency: { _ in 0 }).isEmpty)
+        #expect(plain.exactMatch("cmd", kinds: [.emoji]) == nil)
+        #expect(custom.search("cmd", kinds: [.emoji], frecency: { _ in 0 }).map(\.emoji) == ["⌘"])
+        #expect(custom.exactMatch("cmd", kinds: [.emoji])?.emoji == "⌘")
     }
 
     @Test("a custom alias wins over the catalog alias, and a non-catalog text is synthesized")

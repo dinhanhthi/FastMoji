@@ -40,8 +40,11 @@ final class WelcomeWindowController {
 
     private func makeWindow() -> NSWindow? {
         guard let permission else { return nil }
+        // Not resizable: fit small/scaled screens (margin = titlebar + 24); the Form scrolls.
+        let visibleHeight = NSScreen.main?.visibleFrame.height ?? 790
+        let height = max(480, min(790, visibleHeight - 52))
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: height),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false

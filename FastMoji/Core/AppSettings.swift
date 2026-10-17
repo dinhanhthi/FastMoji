@@ -102,6 +102,26 @@ struct CustomAlias: Codable, Equatable, Identifiable {
     var id: String { alias }
 }
 
+/// The kinds of content shown in the pickers and search (Settings › General › Content).
+/// Custom aliases are not a kind: they always stay available.
+struct ContentKinds: OptionSet, Sendable {
+    let rawValue: Int
+
+    static let emoji = ContentKinds(rawValue: 1 << 0)
+    static let symbols = ContentKinds(rawValue: 1 << 1)
+    static let kaomoji = ContentKinds(rawValue: 1 << 2)
+    static let all: ContentKinds = [.emoji, .symbols, .kaomoji]
+
+    /// Whether rows of `kind` are shown (`nil` is an emoji, as in `Emoji.kind`).
+    func contains(kind: Emoji.Kind?) -> Bool {
+        switch kind {
+        case nil: contains(.emoji)
+        case .symbol: contains(.symbols)
+        case .kaomoji: contains(.kaomoji)
+        }
+    }
+}
+
 /// User settings in `UserDefaults.standard`. `Key` constants are shared with `@AppStorage`;
 /// `registerDefaults()` makes both see the same defaults.
 enum AppSettings {
@@ -123,6 +143,9 @@ enum AppSettings {
         static let pausedUntil = "pausedUntil"
         static let emoticonsEnabled = "emoticonsEnabled"
         static let textArrowsEnabled = "textArrowsEnabled"
+        static let emojiKindEnabled = "emojiKindEnabled"
+        static let symbolsKindEnabled = "symbolsKindEnabled"
+        static let kaomojiKindEnabled = "kaomojiKindEnabled"
         static let welcomeShown = "welcomeShown"
     }
 
@@ -151,6 +174,9 @@ enum AppSettings {
             Key.pausedUntil: 0.0,
             Key.emoticonsEnabled: false,
             Key.textArrowsEnabled: false,
+            Key.emojiKindEnabled: true,
+            Key.symbolsKindEnabled: true,
+            Key.kaomojiKindEnabled: true,
             Key.welcomeShown: false,
         ]
     }
@@ -268,6 +294,16 @@ enum AppSettings {
     static var textArrowsEnabled: Bool {
         get { store.bool(forKey: Key.textArrowsEnabled) }
         set { store.set(newValue, forKey: Key.textArrowsEnabled) }
+    }
+
+    /// The kinds turned on in Settings; `.all` when all three are off, so the pickers never
+    /// end up empty (Settings keeps at least one on).
+    static var enabledKinds: ContentKinds {
+        var kinds: ContentKinds = []
+        if store.bool(forKey: Key.emojiKindEnabled) { kinds.insert(.emoji) }
+        if store.bool(forKey: Key.symbolsKindEnabled) { kinds.insert(.symbols) }
+        if store.bool(forKey: Key.kaomojiKindEnabled) { kinds.insert(.kaomoji) }
+        return kinds.isEmpty ? .all : kinds
     }
 
     /// The welcome window was shown once (new installs and 0.1.x upgraders alike start at false).

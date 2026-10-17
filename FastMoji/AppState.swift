@@ -8,6 +8,8 @@ final class AppState {
     /// Catalog index plus the user's custom aliases; replaced by `setCustomAliases(_:)`.
     private(set) var search: EmojiSearch
     let frecency: FrecencyStore
+    /// Kinds shown by every picker; replaced by `setEnabledKinds(_:)`.
+    private(set) var enabledKinds: ContentKinds
     /// Picker shown by the menubar popover.
     let menuBarPicker: EmojiPickerModel
     /// Every picker, so a new `search` reaches all of them. All live as long as the app.
@@ -20,13 +22,19 @@ final class AppState {
         pickerCatalog = PickerCatalog(index: index)
         search = EmojiSearch(index: index, customAliases: AppSettings.customAliases)
         frecency = FrecencyStore()
-        menuBarPicker = EmojiPickerModel(catalog: pickerCatalog, search: search, frecency: frecency)
+        enabledKinds = AppSettings.enabledKinds
+        menuBarPicker = EmojiPickerModel(
+            catalog: pickerCatalog, search: search, frecency: frecency, enabledKinds: enabledKinds
+        )
         pickers = [menuBarPicker]
     }
 
-    /// A picker sharing the catalog, search and history, kept current by `setCustomAliases(_:)`.
+    /// A picker sharing the catalog, search and history, kept current by `setCustomAliases(_:)`
+    /// and `setEnabledKinds(_:)`.
     func makePicker() -> EmojiPickerModel {
-        let picker = EmojiPickerModel(catalog: pickerCatalog, search: search, frecency: frecency)
+        let picker = EmojiPickerModel(
+            catalog: pickerCatalog, search: search, frecency: frecency, enabledKinds: enabledKinds
+        )
         pickers.append(picker)
         return picker
     }
@@ -36,6 +44,14 @@ final class AppState {
         search = EmojiSearch(index: search.index, customAliases: aliases)
         for picker in pickers {
             picker.replaceSearch(search)
+        }
+    }
+
+    /// Pushes the kinds to every picker (no index rebuild: the search filters at query time).
+    func setEnabledKinds(_ kinds: ContentKinds) {
+        enabledKinds = kinds
+        for picker in pickers {
+            picker.enabledKinds = kinds
         }
     }
 }

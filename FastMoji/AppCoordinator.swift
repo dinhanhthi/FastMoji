@@ -36,6 +36,7 @@ final class AppCoordinator {
     @ObservationIgnored private var ignoredApps = Set(AppSettings.ignoredApps)
     @ObservationIgnored private var ignoredDomains = AppSettings.ignoredDomains
     @ObservationIgnored private var customAliases = AppSettings.customAliases
+    @ObservationIgnored private var enabledKinds = AppSettings.enabledKinds
     @ObservationIgnored private var emoticonsEnabled = AppSettings.emoticonsEnabled
     @ObservationIgnored private var textArrowsEnabled = AppSettings.textArrowsEnabled
     @ObservationIgnored private var detector: TriggerDetector
@@ -297,6 +298,13 @@ final class AppCoordinator {
             customAliases = aliases
             appState.setCustomAliases(aliases)
         }
+        let kinds = AppSettings.enabledKinds
+        if kinds != enabledKinds {
+            // The open inline panel would keep showing results of a turned-off kind.
+            closeInline()
+            enabledKinds = kinds
+            appState.setEnabledKinds(kinds)
+        }
         syncPause()
         updateTap()
     }
@@ -516,7 +524,7 @@ final class AppCoordinator {
         // Input methods compose text in the host: the typed length is unknown, delete nothing.
         // Secure Input on: the panel's password-field check is stale, never post keys.
         guard panel.mode == .inline,
-              let emoji = appState.search.exactMatch(query),
+              let emoji = appState.search.exactMatch(query, kinds: enabledKinds),
               !Self.isInputMethodActive(), !IsSecureEventInputEnabled()
         else { return false }
         closeInline()

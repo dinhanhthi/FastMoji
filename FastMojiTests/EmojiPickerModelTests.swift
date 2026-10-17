@@ -41,6 +41,32 @@ struct EmojiPickerModelTests {
         model.select(model.sections[section].emojis[index], in: section)
     }
 
+    @Test("picking a turned-off tab lands on the first enabled one and shows its sections")
+    func turnedOffTabClampsToFirstEnabled() throws {
+        let suite = "FastMojiTests.EmojiPickerModel.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let catalog = [
+            Emoji(emoji: "e", description: "emoji", category: "Test", aliases: ["e"], tags: []),
+            Emoji(emoji: "s", description: "symbol", category: "Test", aliases: ["s"], tags: [], kind: .symbol),
+            Emoji(emoji: "k", description: "kaomoji", category: "Test", aliases: ["k"], tags: [], kind: .kaomoji),
+        ]
+        let index = CatalogIndex(catalog: catalog)
+        let model = EmojiPickerModel(
+            catalog: PickerCatalog(index: index),
+            search: EmojiSearch(index: index),
+            frecency: FrecencyStore(defaults: defaults),
+            enabledKinds: [.symbols, .kaomoji]
+        )
+        model.tab = .kaomoji
+        model.tab = .emoji
+
+        #expect(model.tab == .symbols)
+        let firstID = try #require(model.sections.first?.id)
+        #expect(firstID.hasPrefix("symbols-") || firstID == "frequent-symbols")
+    }
+
     @Test("down from the last emoji row clamps the column to 2, up from kaomoji keeps the column")
     func moveBetweenNineAndThreeColumns() throws {
         // 22 emoji: the last row holds indices 18...21 (columns 0...3).

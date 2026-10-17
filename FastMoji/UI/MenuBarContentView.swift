@@ -45,7 +45,7 @@ struct MenuBarContentView: View {
             Divider()
             footer
         }
-        .frame(width: 400)
+        .frame(width: 360)
         .capsuleButtons()
         .background(WindowAccessor(box: window))
         .pickerKeyMonitor(model, window: window) { close() }
@@ -142,13 +142,23 @@ struct MenuBarContentView: View {
             }
             Spacer()
             if !updater.updateAvailable {
-                Button("Check for Updates…") {
+                Button {
                     close()
                     updater.checkForUpdates()
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
                 }
+                .buttonStyle(HoverCapsuleButtonStyle(isCircle: true))
+                .help("Check for Updates…")
                 .disabled(!updater.canCheck)
             }
-            Button("Settings") { showSettings() }
+            Button {
+                showSettings()
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(HoverCapsuleButtonStyle(isCircle: true))
+            .help("Settings")
             Button("About") { showAbout() }
             Button("Quit") { NSApp.terminate(nil) }
         }

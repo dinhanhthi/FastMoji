@@ -24,8 +24,9 @@ In Cocoa apps, `⌘;` replaces the "Check Document Now" shortcut (Edit → Spell
 
 - Fuzzy search by name, alias and tag
 - Instant insert with `::alias:`
-- Custom aliases for your own text, e.g. `¯\_(ツ)_/¯` for `shrug` (Settings → Aliases)
-- Symbols (macOS keys `⌘` `⌥` `⇧` `⌃`, arrows, currency, math, typography) and kaomoji, with Emoji / Symbols / Kaomoji tabs and a category bar
+- Custom aliases for your own text, e.g. `¯\_(ツ)_/¯` for `shrug`; add or edit them in Settings → Aliases
+- Symbols (macOS keys `⌘` `⌥` `⇧` `⌃`, arrows, currency, math, typography) and kaomoji, with segmented Emoji / Symbols / Kaomoji tabs and a category bar that underlines the current section
+- Turn Emoji, Symbols or Kaomoji off in Settings → General → Content to hide them from the pickers, search and `::alias:` (custom aliases always work)
 - Search in English, Vietnamese, French and Spanish; accents are optional (e.g. `::cuoi`)
 - Emoji up to Unicode 17, showing only those your macOS can display
 - "Frequently Used" section when the search is empty

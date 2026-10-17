@@ -23,6 +23,8 @@ final class CatalogIndex: Sendable {
     fileprivate struct Field: Sendable {
         let scalars: [Unicode.Scalar]
         let isAlias: Bool
+        /// Tags and keywords: matched contiguously only (see `score`).
+        let isTag: Bool
         let weight: Double
     }
 
@@ -44,15 +46,15 @@ final class CatalogIndex: Sendable {
                 let key = Self.fold(alias)
                 if exact[key] == nil { exact[key] = index }
             }
-            // Highest weight first, so dedup keeps the alias flag and the best weight.
-            let texts = emoji.aliases.map { ($0, true, Score.aliasWeight) }
-                + [(emoji.description, false, Score.descriptionWeight)]
-                + (emoji.tags + (emoji.keywords ?? [])).map { ($0, false, Score.tagWeight) }
+            // Highest weight first, so dedup keeps the best weight and its flags.
+            let texts = emoji.aliases.map { ($0, true, false, Score.aliasWeight) }
+                + [(emoji.description, false, false, Score.descriptionWeight)]
+                + (emoji.tags + (emoji.keywords ?? [])).map { ($0, false, true, Score.tagWeight) }
             var seen: Set<String> = []
-            return texts.compactMap { text, isAlias, weight in
+            return texts.compactMap { text, isAlias, isTag, weight in
                 let folded = Self.fold(text)
                 guard seen.insert(folded).inserted else { return nil }
-                return Field(scalars: Array(folded.unicodeScalars), isAlias: isAlias, weight: weight)
+                return Field(scalars: Array(folded.unicodeScalars), isAlias: isAlias, isTag: isTag, weight: weight)
             }
         }
         self.exact = exact
@@ -123,7 +125,7 @@ struct EmojiSearch: Sendable {
             }
             slots[custom.text] = slot
             exact[key] = slot
-            let field = CatalogIndex.Field(scalars: Array(key.unicodeScalars), isAlias: true, weight: Score.aliasWeight)
+            let field = CatalogIndex.Field(scalars: Array(key.unicodeScalars), isAlias: true, isTag: false, weight: Score.aliasWeight)
             fields.append(CustomField(field: field, slot: slot))
         }
         customFields = fields
@@ -138,7 +140,9 @@ struct EmojiSearch: Sendable {
     /// Matching emoji, symbols and kaomoji, best first. Empty query returns the catalog order.
     /// Catalog ties keep catalog order (emoji, symbols, kaomoji), so grouping the result by `kind`
     /// in order of first appearance gives sections ordered by best score, emoji first on ties.
-    func search(_ query: String, frecency: (String) -> Double) -> [Emoji] {
+    /// Catalog rows of a kind outside `kinds` are skipped, unless a custom alias points at them:
+    /// custom aliases always match.
+    func search(_ query: String, kinds: ContentKinds = .all, frecency: (String) -> Double) -> [Emoji] {
         let folded = CatalogIndex.fold(query.trimmingCharacters(in: .whitespacesAndNewlines))
         let q = Array(folded.unicodeScalars)
         guard !q.isEmpty else { return index.emojis }
@@ -158,6 +162,10 @@ struct EmojiSearch: Sendable {
             hits.append((slot, best + max(0, bonus), custom == best))
         }
         for (i, emojiFields) in index.fields.enumerated() {
+            guard kinds.contains(kind: index.emojis[i].kind) else {
+                add(i, catalogScore: nil) // kept only through a custom alias
+                continue
+            }
             var best: Double?
             for field in emojiFields {
                 guard let s = Self.score(q, in: field) else { continue }
@@ -177,11 +185,13 @@ struct EmojiSearch: Sendable {
         return hits.map { emoji(at: $0.slot) }
     }
 
-    /// The emoji whose alias is exactly `query` (folded), if any. Custom aliases win over the catalog.
-    func exactMatch(_ query: String) -> Emoji? {
+    /// The emoji whose alias is exactly `query` (folded), if any. Custom aliases win over the catalog
+    /// and always match; a catalog alias of a kind outside `kinds` does not.
+    func exactMatch(_ query: String, kinds: ContentKinds = .all) -> Emoji? {
         let key = CatalogIndex.fold(query)
         if let slot = customExact[key] { return emoji(at: slot) }
-        return index.exact[key].map { index.emojis[$0] }
+        guard let i = index.exact[key], kinds.contains(kind: index.emojis[i].kind) else { return nil }
+        return index.emojis[i]
     }
 
     private func emoji(at slot: Int) -> Emoji {
@@ -191,6 +201,8 @@ struct EmojiSearch: Sendable {
     /// Best subsequence score of `q` in `field`, trying every start position; nil if no match.
     /// Minimum match rule: a start inside a word counts only when the whole query follows it
     /// contiguously, so scattered letters don't match (`yeet` must not find "lady_beetle").
+    /// Tags and keywords (many per emoji, often long phrases) need that at every start, word
+    /// starts included: a scattered match there only adds unrelated results to the tail.
     private static func score(_ q: [Unicode.Scalar], in field: CatalogIndex.Field) -> Double? {
         let f = field.scalars
         guard q.count <= f.count else { return nil }
@@ -200,7 +212,7 @@ struct EmojiSearch: Sendable {
         var best: Double?
         for start in f.indices where f[start] == q[0] {
             let atBoundary = start == 0 || isSeparator(f[start - 1])
-            if !atBoundary {
+            if !atBoundary || field.isTag {
                 // A contiguous match also scores best among in-word starts, so skipping the rest
                 // is the same as allowing any match once the query is a substring.
                 guard start + q.count <= f.count, f[start..<start + q.count].elementsEqual(q) else { continue }

@@ -120,13 +120,38 @@ final class EmojiPickerModel {
         }
     }
 
-    /// Browse tab, shown while the query is empty; a search lists every kind whatever the tab.
-    var tab: PickerTab = .emoji {
-        didSet {
+    /// Browse tab, shown while the query is empty; a search lists every enabled kind whatever the tab.
+    /// Always one of `enabledTabs`: a turned-off tab is replaced by the first enabled one.
+    /// Clamped before it is stored, so no observer assigns `tab` again (rebuilds once).
+    var tab: PickerTab {
+        get { selectedTab }
+        set {
+            let effective = clamped(newValue)
             // Same write-back guard as `query`; with a query the sections don't depend on the tab.
-            guard tab != oldValue, query.isEmpty else { return }
+            guard effective != selectedTab else { return }
+            selectedTab = effective
+            if query.isEmpty { rebuild() }
+        }
+    }
+    private var selectedTab: PickerTab = .emoji
+
+    /// The kinds shown in the tabs, search and "Frequently Used" (custom aliases always match).
+    var enabledKinds: ContentKinds = .all {
+        didSet {
+            guard enabledKinds != oldValue else { return }
+            selectedTab = clamped(selectedTab)
             rebuild()
         }
+    }
+
+    /// The browse tabs of the enabled kinds, in `PickerTab` order.
+    var enabledTabs: [PickerTab] {
+        PickerTab.allCases.filter { enabledKinds.contains(kind: $0.kind) }
+    }
+
+    /// `tab` if its kind is enabled, else the first enabled tab (unchanged when none is enabled).
+    private func clamped(_ tab: PickerTab) -> PickerTab {
+        enabledKinds.contains(kind: tab.kind) ? tab : enabledTabs.first ?? tab
     }
 
     /// Every section holds at least one emoji; empty when a search has no hits.
@@ -144,10 +169,12 @@ final class EmojiPickerModel {
     @ObservationIgnored private var search: EmojiSearch
     @ObservationIgnored private let frecency: FrecencyStore
 
-    init(catalog: PickerCatalog, search: EmojiSearch, frecency: FrecencyStore) {
+    init(catalog: PickerCatalog, search: EmojiSearch, frecency: FrecencyStore, enabledKinds: ContentKinds = .all) {
         self.catalog = catalog
         self.search = search
         self.frecency = frecency
+        self.enabledKinds = enabledKinds
+        selectedTab = clamped(selectedTab)
         rebuild()
     }
 
@@ -266,7 +293,7 @@ final class EmojiPickerModel {
                 + catalog.categorySections(for: tab)
         } else {
             let frecency = self.frecency
-            let hits = search.search(query) { frecency.score($0) }
+            let hits = search.search(query, kinds: enabledKinds) { frecency.score($0) }
             sections = Self.groupByKind(hits)
         }
         selection = sections.isEmpty ? nil : PickerSelection(section: 0, index: 0)

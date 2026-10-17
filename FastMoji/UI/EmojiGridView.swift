@@ -2,18 +2,23 @@ import AppKit
 import SwiftUI
 
 /// Navigation row (tabs + section icons), emoji grid and description footer, driven entirely by
-/// `EmojiPickerModel`. ~400x320; the hosting surface adds its search field on top (~360 total).
+/// `EmojiPickerModel`. 360x288 (9 flexible emoji columns, ~37-38 pt wide, of 32 pt tall cells); the
+/// hosting surface adds its search field on top (~333 tall in the hotkey / inline panel).
 struct EmojiGridView: View {
     let model: EmojiPickerModel
     /// Emoji / Symbols / Kaomoji tabs (hotkey and menubar pickers; the inline picker stays on emoji).
+    /// Hidden anyway while fewer than two kinds are enabled.
     let showsTabs: Bool
 
     @AppStorage(AppSettings.Key.skinTone) private var skinTone = SkinTone.none
     /// Cells drawn by the lazy grids; `scrollTo` only reaches those (not observed: no redraws).
     @State private var realizedCells = RealizedCells()
+    /// Sliding tab background and section underline.
+    @Namespace private var namespace
 
-    private static let cellSize: CGFloat = 36
+    private static let cellSize: CGFloat = 32
     private static let rowHeight: CGFloat = 28
+    private static let slide: Animation = .snappy(duration: 0.2)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,7 +30,9 @@ struct EmojiGridView: View {
             Divider()
             footer
         }
-        .frame(width: 400, height: 320)
+        .frame(width: 360, height: 288)
+        // Reopening resets the selection: no underline sliding in while the surface appears.
+        .transaction(value: model.resetCount) { $0.disablesAnimations = true }
     }
 
     private var grid: some View {
@@ -57,8 +64,9 @@ struct EmojiGridView: View {
         }
     }
 
-    /// Header + its own grid (emoji and symbols: 9 columns, kaomoji: 3). The id is the section's,
-    /// so `scrollTo` reaches it even before the lazy stack has drawn it.
+    /// Header + its own grid (emoji and symbols: 9 columns, kaomoji: 3; no grid spacing, the
+    /// 32 pt cells space themselves). The id is the section's, so `scrollTo` reaches it even
+    /// before the lazy stack has drawn it.
     private func sectionView(_ section: PickerSection, sectionIndex: Int) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(section.title)
@@ -66,7 +74,7 @@ struct EmojiGridView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 4)
-                .padding(.top, 8)
+                .padding(.top, 6)
                 .padding(.bottom, 2)
             // Flexible, not fixed: a legacy scroller takes ~15 pt of the width.
             LazyVGrid(
@@ -109,14 +117,14 @@ struct EmojiGridView: View {
         switch emoji.kind {
         case nil:
             Text(emoji.toned(skinTone))
-                .font(.system(size: 24))
+                .font(.system(size: 21))
         case .symbol:
             Text(emoji.emoji)
-                .font(.system(size: 22))
+                .font(.system(size: 19))
                 .foregroundStyle(.primary)
         case .kaomoji:
             Text(emoji.emoji)
-                .font(.system(size: 13))
+                .font(.system(size: 12))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -126,35 +134,43 @@ struct EmojiGridView: View {
 
     // MARK: Navigation
 
-    /// Tabs (when shown) above one icon button per section of the current tab.
-    /// Two rows: the three tabs and up to 11 icons don't fit in 400 pt.
+    /// Tabs (when shown, and at least two) above one icon button per section of the current tab.
+    /// Two rows: the tabs and up to 11 icons don't fit in 360 pt. Padded on every side so the
+    /// Dividers above and below never touch the controls.
     private func navigation(_ proxy: ScrollViewProxy) -> some View {
-        VStack(spacing: 0) {
-            if showsTabs {
+        VStack(spacing: 4) {
+            if showsTabs && model.enabledTabs.count > 1 {
                 tabs
-                    .frame(maxWidth: .infinity, minHeight: Self.rowHeight, maxHeight: Self.rowHeight, alignment: .leading)
             }
             sectionButtons(proxy)
                 .frame(maxWidth: .infinity, minHeight: Self.rowHeight, maxHeight: Self.rowHeight, alignment: .leading)
         }
         .padding(.horizontal, 8)
+        .padding(.top, 7)
+        .padding(.bottom, 4)
     }
 
+    /// Segmented control: equal segments on a rounded track, the selected background slides.
     private var tabs: some View {
-        HStack(spacing: 4) {
-            ForEach(PickerTab.allCases, id: \.self) { tab in
-                Button(tab.title) { model.tab = tab }
-                    .buttonStyle(HoverCapsuleButtonStyle())
-                    .background(highlight(tab == model.tab))
+        HStack(spacing: 0) {
+            ForEach(model.enabledTabs, id: \.self) { tab in
+                TabSegment(title: tab.title, isSelected: tab == model.tab, namespace: namespace) {
+                    model.tab = tab
+                }
             }
         }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.quaternary))
+        .animation(Self.slide, value: model.tab)
     }
 
     /// Each button selects the first cell of its section and scrolls its header to the top;
-    /// the section holding the selection is highlighted.
+    /// an underline slides under the section holding the selection. Ids are positions, not the
+    /// tab-prefixed section ids: the buttons survive a tab switch, so the underline slides too.
     private func sectionButtons(_ proxy: ScrollViewProxy) -> some View {
-        HStack(spacing: 2) {
-            ForEach(Array(model.sections.enumerated()), id: \.element.id) { sectionIndex, section in
+        let selectedSection = model.selection?.section
+        return HStack(spacing: 4) {
+            ForEach(Array(model.sections.enumerated()), id: \.offset) { sectionIndex, section in
                 Button {
                     model.jump(to: sectionIndex)
                     // Also when its first cell was already selected (no selection change then).
@@ -162,19 +178,19 @@ struct EmojiGridView: View {
                 } label: {
                     sectionIcon(section.title)
                 }
-                .buttonStyle(HoverCapsuleButtonStyle(isCircle: true))
-                .background(highlight(model.selection?.section == sectionIndex))
+                .buttonStyle(SectionIconButtonStyle(isSelected: sectionIndex == selectedSection))
+                .overlay(alignment: .bottom) {
+                    if sectionIndex == selectedSection {
+                        RoundedRectangle(cornerRadius: 1, style: .continuous)
+                            .fill(Color.accentColor)
+                            .frame(width: 16, height: 2)
+                            .matchedGeometryEffect(id: "underline", in: namespace)
+                    }
+                }
                 .help(section.title)
             }
         }
-    }
-
-    /// Same accent as a selected cell.
-    @ViewBuilder
-    private func highlight(_ isOn: Bool) -> some View {
-        if isOn {
-            Capsule().fill(Color.accentColor.opacity(0.25))
-        }
+        .animation(Self.slide, value: selectedSection)
     }
 
     /// The SF Symbol of `title`, else its first letter.
@@ -267,6 +283,67 @@ struct EmojiGridView: View {
     /// Unique across sections (an emoji can be both "Frequently Used" and in its category).
     private static func cellID(_ section: PickerSection, _ emoji: Emoji) -> String {
         "\(section.id)-\(emoji.emoji)"
+    }
+}
+
+/// One tab of the segmented control: hover tints the segment, the selected one carries the
+/// sliding background.
+private struct TabSegment: View {
+    let title: String
+    let isSelected: Bool
+    let namespace: Namespace.ID
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.callout.weight(isSelected ? .medium : .regular))
+                .foregroundStyle(isSelected || isHovered ? .primary : .secondary)
+                .frame(maxWidth: .infinity, minHeight: 22)
+                .background {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(.background)
+                            .shadow(color: .black.opacity(0.15), radius: 1, y: 0.5)
+                            .matchedGeometryEffect(id: "tab", in: namespace)
+                    } else if isHovered {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.primary.opacity(0.06))
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+    }
+}
+
+/// Plain section icon: secondary at rest, primary when hovered or holding the selection.
+private struct SectionIconButtonStyle: ButtonStyle {
+    let isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        SectionIcon(configuration: configuration, isSelected: isSelected)
+    }
+
+    private struct SectionIcon: View {
+        let configuration: ButtonStyleConfiguration
+        let isSelected: Bool
+        @State private var isHovered = false
+
+        var body: some View {
+            configuration.label
+                .font(.callout)
+                .foregroundStyle(isSelected || isHovered ? .primary : .secondary)
+                .opacity(configuration.isPressed ? 0.6 : 1)
+                .frame(width: 26, height: 24)
+                .contentShape(Rectangle())
+                .onHover { isHovered = $0 }
+                .animation(.easeOut(duration: 0.12), value: isHovered)
+        }
     }
 }
 
