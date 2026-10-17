@@ -3,7 +3,7 @@ import Carbon.HIToolbox
 import CoreGraphics
 import Observation
 
-/// Wires the Accessibility permission, the event tap, the picker panels and the inserter.
+/// Wires the Accessibility permission, the event tap, the picker panel and the inserter.
 /// Created once at launch (never while hosting unit tests, so tests never start the tap).
 @MainActor
 @Observable
@@ -12,12 +12,11 @@ final class AppCoordinator {
 
     @ObservationIgnored private let tap = EventTap()
     @ObservationIgnored private let frecency: FrecencyStore
-    /// Model of the hotkey panel; shares catalog, search and history with the menubar picker.
-    @ObservationIgnored private let hotkeyPicker: EmojiPickerModel
+    /// Model of the panel; shares catalog, search and history with the menubar picker.
+    @ObservationIgnored private let picker: EmojiPickerModel
+    /// One panel for the hotkey and inline triggers, which are never visible together:
+    /// each SwiftUI tree costs several MB, kept for the app's lifetime.
     @ObservationIgnored private let panel: PickerPanelController
-    /// Model of the inline panel, fed by the event tap; separate so it never disturbs the others.
-    @ObservationIgnored private let inlinePicker: EmojiPickerModel
-    @ObservationIgnored private let inlinePanel: PickerPanelController
 
     /// Settings read on every keystroke, refreshed on `UserDefaults.didChangeNotification`.
     @ObservationIgnored private var hotkey = AppSettings.hotkey
@@ -70,18 +69,20 @@ final class AppCoordinator {
 
     init(appState: AppState) {
         frecency = appState.frecency
-        hotkeyPicker = EmojiPickerModel(
+        picker = EmojiPickerModel(
             catalog: appState.catalog, search: appState.search, frecency: appState.frecency
         )
-        panel = PickerPanelController(model: hotkeyPicker)
-        inlinePicker = EmojiPickerModel(
-            catalog: appState.catalog, search: appState.search, frecency: appState.frecency
-        )
-        inlinePanel = PickerPanelController(model: inlinePicker)
+        panel = PickerPanelController(model: picker)
         detector = Self.makeDetector(sequence: AppSettings.triggerSequence, windowMs: AppSettings.triggerWindowMs)
 
-        hotkeyPicker.onConfirm = { [weak self] emoji in self?.confirmHotkey(emoji) }
-        inlinePicker.onConfirm = { [weak self] emoji in self?.confirmInline(emoji) }
+        picker.onConfirm = { [weak self] emoji in
+            guard let self else { return }
+            if self.panel.mode == .inline {
+                self.confirmInline(emoji)
+            } else {
+                self.confirmHotkey(emoji)
+            }
+        }
         rememberExternalApp()
 
         let center = NotificationCenter.default
@@ -210,7 +211,7 @@ final class AppCoordinator {
     /// Feeds the trigger detector; swallows only navigation / confirm keys of a visible inline panel.
     private func handleInlineKey(_ event: CGEvent, keyCode: UInt16, isRepeat: Bool) -> Bool {
         // Typed into FastMoji's own windows (hotkey panel, menubar popover): not a host-app trigger.
-        if panel.isVisible || NSApp.isActive || NSApp.keyWindow != nil {
+        if panel.mode == .hotkey || NSApp.isActive || NSApp.keyWindow != nil {
             closeInline()
             return false
         }
@@ -218,7 +219,7 @@ final class AppCoordinator {
             closeInline()
             return false
         }
-        if inlinePanel.isVisible, let swallow = handleVisibleInlineKey(keyCode) {
+        if panel.mode == .inline, let swallow = handleVisibleInlineKey(keyCode) {
             return swallow
         }
         // A held key never starts or extends a query.
@@ -262,7 +263,7 @@ final class AppCoordinator {
 
     private func moveInline(_ direction: MoveDirection) {
         applyInlineQuery()
-        inlinePicker.move(direction)
+        picker.move(direction)
     }
 
     /// Return / Enter / Tab: picks the selection when there is one the user asked for,
@@ -275,8 +276,8 @@ final class AppCoordinator {
         }
         // A query update may still be queued: the pick must match what was typed.
         applyInlineQuery()
-        guard let emoji = inlinePicker.selectedEmoji,
-              !detector.query.isEmpty || inlinePicker.hasMoved
+        guard let emoji = picker.selectedEmoji,
+              !detector.query.isEmpty || picker.hasMoved
         else {
             if keyCode == KeyCode.tab {
                 closeInline()
@@ -335,11 +336,14 @@ final class AppCoordinator {
     private func handleMouseDown() {
         let mouse = NSEvent.mouseLocation
         // A click on an inline cell confirms via `onConfirm`, which still needs the typed length.
-        if inlinePanel.isVisible, inlinePanel.frame.contains(mouse) { return }
+        if panel.mode == .inline, panel.frame.contains(mouse) { return }
         cancelCaretLookup()
         closeInline()
-        guard panel.isVisible, !panel.frame.contains(mouse) else { return }
-        DispatchQueue.main.async { [weak self] in self?.panel.hide() }
+        guard panel.mode == .hotkey, !panel.frame.contains(mouse) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.panel.mode == .hotkey else { return }
+            self.panel.hide()
+        }
     }
 
     // MARK: - Caret lookup
@@ -406,7 +410,7 @@ final class AppCoordinator {
     /// The detector saw the trigger sequence (async, outside the tap callback).
     private func openInline() {
         // A hotkey caret lookup in flight keeps its panel: never replace it with the inline one.
-        guard detector.isActive, !panel.isVisible, locatingCaret != .hotkey else { return }
+        guard detector.isActive, panel.mode != .hotkey, locatingCaret != .hotkey else { return }
         // Input methods (Vietnamese Telex, Pinyin, ...) compose text in the host app: the tap sees
         // raw keys, so the query and the deletion count would be wrong. Hotkey + menubar still work.
         if Self.isInputMethodActive() {
@@ -419,23 +423,24 @@ final class AppCoordinator {
 
     private func showInlinePanel(at caret: NSRect) {
         // Closed while the caret was located (space, click, app switch, ...).
-        guard detector.isActive, !panel.isVisible else { return }
-        inlinePanel.show(at: caret, mode: .inline)
+        guard detector.isActive, panel.mode != .hotkey else { return }
+        panel.show(at: caret, mode: .inline)
         // `show` resets the model: re-apply what was typed during the lookup.
         applyInlineQuery()
     }
 
     /// Mirrors the detector's query into the visible inline panel (no-op search if unchanged).
     private func applyInlineQuery() {
-        guard inlinePanel.isVisible, detector.isActive else { return }
-        inlinePicker.query = detector.query.lowercased()
-        inlinePanel.setInlineQuery(triggerSequence + detector.query)
+        guard panel.mode == .inline, detector.isActive else { return }
+        picker.query = detector.query.lowercased()
+        panel.setInlineQuery(triggerSequence + detector.query)
     }
 
     /// Hides the inline panel (or cancels its pending opening) without touching the detector.
+    /// Never hides the panel in hotkey mode.
     private func hideInline() {
         if locatingCaret == .inline { cancelCaretLookup() }
-        inlinePanel.hide()
+        if panel.mode == .inline { panel.hide() }
     }
 
     /// Resets the detector and hides the inline panel; the host text is left as typed.
