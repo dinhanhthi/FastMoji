@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-17
+
 ### Added
 
 - Settings → Ignored: lists of apps and websites where FastMoji stays out of the way. In an ignored app, the inline trigger and the hotkey are off and their keys reach the app untouched. On an ignored website (and its subdomains), the inline trigger is off; the hotkey still works. The menubar works everywhere.
