@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Settings → Ignored: lists of apps and websites where FastMoji stays out of the way. In an ignored app, the inline trigger and the hotkey are off and their keys reach the app untouched. On an ignored website (and its subdomains), the inline trigger is off; the hotkey still works. The menubar works everywhere.
+- The search panel has an Ignore button next to Settings: it adds the current app, or the current website in a browser, to Settings → Ignored.
 
 ### Changed
 

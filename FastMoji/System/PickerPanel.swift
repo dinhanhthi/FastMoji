@@ -42,6 +42,16 @@ final class PickerPanelState {
     var mode: PickerMode = .hotkey
     /// Text typed in the host app, trigger included (e.g. "::smi"); inline mode only.
     var inlineQuery = ""
+    /// What the Ignore button adds to Settings → Ignored; nil hides the button.
+    var ignoreTarget: IgnoreTarget?
+    /// Tooltip of the hovered header button.
+    var tooltip: String?
+}
+
+/// The app or website the panel was opened in.
+enum IgnoreTarget: Equatable {
+    case app(bundleID: String, name: String)
+    case domain(String)
 }
 
 /// Takes the first click: the inline panel is never key, so its buttons must act on that click.
@@ -113,6 +123,9 @@ final class PickerPanelController {
         model.reset()
         state.mode = mode
         state.inlineQuery = ""
+        state.ignoreTarget = nil
+        // The panel may have hidden under the pointer: no exit event cleared it.
+        state.tooltip = nil
 
         hostingView.layoutSubtreeIfNeeded()
         let frame = Self.frame(size: hostingView.fittingSize, caret: caret)
@@ -137,6 +150,10 @@ final class PickerPanelController {
     /// Shows the text typed in the host app (inline mode); the caller also sets `model.query`.
     func setInlineQuery(_ text: String) {
         state.inlineQuery = text
+    }
+
+    func setIgnoreTarget(_ target: IgnoreTarget?) {
+        state.ignoreTarget = target
     }
 
     private static func frame(size: NSSize, caret: NSRect) -> NSRect {

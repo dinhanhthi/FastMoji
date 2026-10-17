@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Hotkey / inline picker panel: header (with Settings / Quit buttons) and shared emoji grid.
+/// Hotkey / inline picker panel: header (with Ignore / Settings / Quit buttons) and shared emoji grid.
 struct PanelContentView: View {
     let model: EmojiPickerModel
     let state: PickerPanelState
@@ -20,6 +20,8 @@ struct PanelContentView: View {
             header
                 .padding(.horizontal, 12)
                 .frame(height: Self.headerHeight)
+                // Tooltips hang below the header: draw them over the grid.
+                .zIndex(1)
             Divider()
             EmojiGridView(model: model)
         }
@@ -33,21 +35,45 @@ struct PanelContentView: View {
     /// Right of the input in both modes, whether or not the menubar is on.
     private var appButtons: some View {
         HStack(spacing: 6) {
+            if let target = state.ignoreTarget {
+                Button {
+                    ignore(target)
+                } label: {
+                    Image(systemName: "eye.slash")
+                }
+                .panelTooltip(Self.ignoreHelp(target), state: state)
+            }
             Button {
                 onCancel()
                 SettingsWindowController.shared.show()
             } label: {
                 Image(systemName: "gearshape")
             }
-            .help("Settings")
+            .panelTooltip("Settings", state: state)
             Button {
                 confirmQuit()
             } label: {
                 Image(systemName: "power")
             }
-            .help("Quit FastMoji")
+            .panelTooltip("Quit FastMoji", state: state)
         }
         .buttonStyle(HoverCapsuleButtonStyle(isCircle: true))
+    }
+
+    /// Adds the target to Settings → Ignored, where it can be removed again.
+    private func ignore(_ target: IgnoreTarget) {
+        onCancel()
+        switch target {
+        case .app(let bundleID, _): AppSettings.ignoredApps.append(bundleID)
+        case .domain(let domain): AppSettings.ignoredDomains.append(domain)
+        }
+    }
+
+    private static func ignoreHelp(_ target: IgnoreTarget) -> String {
+        switch target {
+        case .app(_, let name): "Ignore \(name)\nNo inline trigger or hotkey in this app"
+        case .domain(let domain): "Ignore \(domain)\nNo inline trigger on this website"
+        }
     }
 
     /// The panel never activates FastMoji: activate it so the alert is frontmost and takes keys.
@@ -113,5 +139,57 @@ struct PanelContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             appButtons
         }
+    }
+}
+
+private extension View {
+    func panelTooltip(_ text: String, state: PickerPanelState) -> some View {
+        modifier(PanelTooltip(text: text, state: state))
+    }
+}
+
+/// `.help` waits about a second and never shows here: FastMoji is never the active app while the
+/// panel is up, and the inline panel is not even key. This one shows after a short hover.
+private struct PanelTooltip: ViewModifier {
+    let text: String
+    let state: PickerPanelState
+    @State private var showTask: Task<Void, Never>?
+
+    private static let delay: Duration = .milliseconds(250)
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                showTask?.cancel()
+                guard hovering else {
+                    if state.tooltip == text { withAnimation(.easeOut(duration: 0.1)) { state.tooltip = nil } }
+                    return
+                }
+                showTask = Task {
+                    try? await Task.sleep(for: Self.delay)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeOut(duration: 0.1)) { state.tooltip = text }
+                }
+            }
+            // Trailing-aligned: the buttons sit at the panel's right edge, so it grows to the left.
+            .overlay(alignment: .topTrailing) {
+                if state.tooltip == text {
+                    Text(text)
+                        .font(.caption)
+                        .fixedSize()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+                        // Below the 26 pt button, with a small gap.
+                        .offset(y: 32)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
     }
 }

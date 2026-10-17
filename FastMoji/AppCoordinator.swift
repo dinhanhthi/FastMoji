@@ -38,6 +38,8 @@ final class AppCoordinator {
     /// Bumped on every lookup and cancel so a lookup that finishes late is dropped.
     @ObservationIgnored private var caretRequest = 0
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    /// Bumped per panel opening: a late web host lookup never retargets a newer panel.
+    @ObservationIgnored private var ignoreRequest = 0
 
     private static let modifierMask = CGEventFlags.maskCommand.rawValue
         | CGEventFlags.maskAlternate.rawValue
@@ -178,7 +180,11 @@ final class AppCoordinator {
             ignoredApps = apps
         }
         let domains = AppSettings.ignoredDomains
-        if domains != ignoredDomains { ignoredDomains = domains }
+        if domains != ignoredDomains {
+            // The panel's Ignore button: stop the query typed on the newly ignored website.
+            closeInline()
+            ignoredDomains = domains
+        }
         updateTap()
     }
 
@@ -429,6 +435,26 @@ final class AppCoordinator {
     private func showHotkeyPanel(at caret: NSRect) {
         closeInline()
         panel.show(at: caret, mode: .hotkey)
+        resolveIgnoreTarget()
+    }
+
+    /// The Ignore button offers the target app, or the website when the caret is in a web page.
+    /// The host lookup walks AX ancestors: done after the panel shows, so it never delays it.
+    private func resolveIgnoreTarget() {
+        ignoreRequest += 1
+        let request = ignoreRequest
+        guard let app = targetApp, let bundleID = app.bundleIdentifier,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier
+        else { return }
+        panel.setIgnoreTarget(.app(bundleID: bundleID, name: app.localizedName ?? bundleID))
+        Task { @MainActor [weak self] in
+            let host = await Task.detached(priority: .userInitiated) { CaretLocator.focusedWebHost() }.value
+            guard let self, request == self.ignoreRequest, self.panel.mode != nil,
+                  let domain = host.flatMap(AppSettings.normalizedDomain) else { return }
+            // Already ignored (the hotkey still works there): nothing left to offer.
+            let ignored = AppSettings.isIgnored(host: domain, domains: self.ignoredDomains)
+            self.panel.setIgnoreTarget(ignored ? nil : .domain(domain))
+        }
     }
 
     /// Enter or click in the hotkey panel; the model has already recorded the pick in the history.
@@ -459,6 +485,7 @@ final class AppCoordinator {
         panel.show(at: caret, mode: .inline)
         // `show` resets the model: re-apply what was typed during the lookup.
         applyInlineQuery()
+        resolveIgnoreTarget()
     }
 
     /// Mirrors the detector's query into the visible inline panel (no-op search if unchanged).

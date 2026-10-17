@@ -85,6 +85,9 @@ struct SettingsView: View {
         // Back from System Settings (e.g. after approving the login item).
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshLoginStatus()
+            // Also changed by the panel's Ignore button while this (reused) view was closed.
+            ignoredApps = AppSettings.ignoredApps
+            ignoredDomains = AppSettings.ignoredDomains
         }
         // Closing keeps the field focused (no blur): commit here so the window reappears with the stored value.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
