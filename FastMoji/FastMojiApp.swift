@@ -11,7 +11,7 @@ struct FastMojiApp: App {
         MenuBarExtra(isInserted: $menubarEnabled) {
             MenuBarRoot(appDelegate: appDelegate)
         } label: {
-            Image(systemName: "face.smiling")
+            Image(.menuBarIcon)
         }
         .menuBarExtraStyle(.window)
     }
