@@ -74,7 +74,7 @@ The same script also writes `FastMoji/Resources/symbols.json` and checks `FastMo
 
 ## Releasing
 
-Releases are built, notarized and published locally, with Sparkle for in-app updates. See [docs/RELEASING.md](docs/RELEASING.md).
+Releases are built, notarized and published locally, with Sparkle for in-app updates.
 
 ## Commits
 
