@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Menubar popover: search field, shared emoji grid, Update (when available) / Settings / About / Quit footer.
+/// Menubar popover: search field, shared emoji grid, Update or Check for Updates / Settings / About / Quit footer.
 /// Enter / click runs `AppSettings.menubarAction`.
 struct MenuBarContentView: View {
     let model: EmojiPickerModel
@@ -95,6 +95,13 @@ struct MenuBarContentView: View {
                 .foregroundStyle(.green)
             }
             Spacer()
+            if !updater.updateAvailable {
+                Button("Check for Updates…") {
+                    close()
+                    updater.checkForUpdates()
+                }
+                .disabled(!updater.canCheck)
+            }
             Button("Settings") { showSettings() }
             Button("About") { showAbout() }
             Button("Quit") { NSApp.terminate(nil) }

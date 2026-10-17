@@ -10,4 +10,4 @@ sparkle_private_key*
 *.p12
 *.pem
 
-docs/showcase/
+docs/*
