@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# bump-version.sh — Bump FastMoji's version for a release (docs/RELEASING.md §1).
+# bump-version.sh — Bump FastMoji's version for a release.
 #
 # Edits the two version settings in FastMoji.xcodeproj/project.pbxproj (project-level
 # Debug + Release, so each appears twice and both copies must stay identical):

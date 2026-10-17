@@ -10,7 +10,7 @@ final class SettingsWindowController {
     private var frecency: FrecencyStore?
     private var permission: AccessibilityPermission?
     private var updater: Updater?
-    private var window: NSWindow?
+    private(set) var window: NSWindow?
     private var closeObserver: NSObjectProtocol?
 
     private init() {}
@@ -25,7 +25,7 @@ final class SettingsWindowController {
     /// Brings the window to the front, creating it on first use.
     func show() {
         guard let window = window ?? makeWindow() else { return }
-        // Dock icon only while Settings is open; closing the window hides it again.
+        // Dock icon only while Settings (or Welcome) is open; closing the last one hides it again.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
@@ -53,10 +53,19 @@ final class SettingsWindowController {
         window.center()
         closeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: window, queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { _ = NSApp.setActivationPolicy(.accessory) }
+        ) { note in
+            MainActor.assumeIsolated { Self.hideDockIcon(closing: note.object as? NSWindow) }
         }
         self.window = window
         return window
+    }
+
+    /// Hides the Dock icon again, unless the other FastMoji window (Settings, Welcome) is still
+    /// open. Called on `willClose`, while `closing` is still visible. Listed explicitly rather than
+    /// scanning `NSApp.windows`: the status item and the menubar popover have windows too.
+    static func hideDockIcon(closing: NSWindow?) {
+        let othersOpen = [SettingsWindowController.shared.window, WelcomeWindowController.shared.window]
+            .contains { $0 !== closing && $0?.isVisible == true }
+        if !othersOpen { NSApp.setActivationPolicy(.accessory) }
     }
 }

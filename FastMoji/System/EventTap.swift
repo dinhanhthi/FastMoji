@@ -13,6 +13,9 @@ final class EventTap {
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var handler: ((CGEventType, CGEvent) -> Bool)?
+    /// Called (in the callback) when macOS disabled the tap, just after it is re-enabled:
+    /// keys typed meanwhile were never seen. Kept across `stop()`.
+    var onDisabled: (() -> Void)?
 
     var isRunning: Bool { tap != nil }
 
@@ -71,6 +74,7 @@ final class EventTap {
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            onDisabled?()
             return false
         default:
             break

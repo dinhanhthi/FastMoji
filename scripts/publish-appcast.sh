@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# publish-appcast.sh — Generate + commit + push the Sparkle appcast (docs/RELEASING.md §1).
+# publish-appcast.sh — Generate + commit + push the Sparkle appcast.
 #
 # Finds Sparkle's generate_appcast in DerivedData, runs it over a FRESH
 # release/appcast-archives/ that holds only the new zip plus a copy of the repo-root
@@ -11,7 +11,7 @@
 # The zip must already be notarized + stapled (build-and-notarize.sh) and the GitHub
 # Release must exist (publish-release.sh), since the appcast points at its asset URL.
 #
-# Prereqs (one-time — docs/RELEASING.md §0):
+# Prereqs (one-time):
 #   - Sparkle EdDSA key in the login Keychain under the account "FastMoji"
 #     (generate_keys --account FastMoji); click "Always Allow" on the Keychain prompt
 #   - one build of the project, so DerivedData holds the Sparkle tools

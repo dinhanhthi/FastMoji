@@ -30,4 +30,15 @@ struct AppSettingsTests {
         #expect(AppSettings.normalizedDomain("a b") == nil)
         #expect(AppSettings.normalizedDomain("foo..com") == nil)
     }
+
+    @Test("custom alias validation: lowercase query alias, single-line text up to 200 UTF-16 units")
+    func customAliasValidation() {
+        #expect(AppSettings.isValidCustomAlias(alias: "shrug", text: #"¯\_(ツ)_/¯"#))
+        #expect(AppSettings.isValidCustomAlias(alias: "family", text: "👨‍👩‍👧"))
+        #expect(!AppSettings.isValidCustomAlias(alias: "Shrug", text: "🤷"))
+        #expect(!AppSettings.isValidCustomAlias(alias: "shr:ug", text: "🤷"))
+        #expect(!AppSettings.isValidCustomAlias(alias: "shrug", text: "line one\nline two"))
+        // 101 characters but 202 UTF-16 units.
+        #expect(!AppSettings.isValidCustomAlias(alias: "long", text: String(repeating: "😀", count: 101)))
+    }
 }

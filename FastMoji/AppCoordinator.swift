@@ -9,8 +9,17 @@ import Observation
 @Observable
 final class AppCoordinator {
     let permission = AccessibilityPermission()
+    /// Polled only while the tap runs (the tap is what Secure Input blinds).
+    let secureInput = SecureInputMonitor()
+    /// End of the current pause, nil when not paused. Mirrors `AppSettings.pausedUntil`;
+    /// observable so the popover shows the pause row.
+    private(set) var pausedUntil: Date?
+    /// True while a pause runs: the tap is stopped, only the menubar picker works.
+    var isPaused: Bool { pausedUntil.map { $0 > Date() } ?? false }
 
     @ObservationIgnored private let tap = EventTap()
+    /// Owns the search (exact `::alias:` lookups) and pushes custom alias changes to every picker.
+    @ObservationIgnored private let appState: AppState
     @ObservationIgnored private let frecency: FrecencyStore
     /// Model of the panel; shares catalog, search and history with the menubar picker.
     @ObservationIgnored private let picker: EmojiPickerModel
@@ -26,7 +35,29 @@ final class AppCoordinator {
     @ObservationIgnored private var triggerWindowMs = AppSettings.triggerWindowMs
     @ObservationIgnored private var ignoredApps = Set(AppSettings.ignoredApps)
     @ObservationIgnored private var ignoredDomains = AppSettings.ignoredDomains
+    @ObservationIgnored private var customAliases = AppSettings.customAliases
+    @ObservationIgnored private var enabledKinds = AppSettings.enabledKinds
+    @ObservationIgnored private var emoticonsEnabled = AppSettings.emoticonsEnabled
+    @ObservationIgnored private var textArrowsEnabled = AppSettings.textArrowsEnabled
     @ObservationIgnored private var detector: TriggerDetector
+    /// Converts emoticons and/or text arrows, built from the enabled tables.
+    @ObservationIgnored private var emoticons: EmoticonDetector
+    /// Bumped per emoticon candidate: a focus check that finishes late never approves a later one.
+    @ObservationIgnored private var emoticonRequest = 0
+    /// Request id whose focus check passed (no password field, no ignored website), nil when none.
+    @ObservationIgnored private var emoticonApproved: Int?
+    /// The last conversion posted, so the Backspace right after may undo it; nil when none.
+    @ObservationIgnored private var emoticonUndo: EmoticonUndo?
+
+    /// What a Backspace undo checks again before posting keys.
+    private struct EmoticonUndo {
+        /// Request id of the conversion's candidate: a newer candidate makes it stale.
+        let request: Int
+        /// App the conversion was typed into: the undo goes to the same app only.
+        let pid: pid_t
+        /// The conversion was pasted on the next main-queue turn: the undo must queue behind it.
+        let usedPaste: Bool
+    }
 
     /// App that was frontmost when a panel opened; receives the emoji.
     @ObservationIgnored private var targetApp: NSRunningApplication?
@@ -40,6 +71,8 @@ final class AppCoordinator {
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// Bumped per panel opening: a late web host lookup never retargets a newer panel.
     @ObservationIgnored private var ignoreRequest = 0
+    /// Clears the pause when it ends; replaced on every pause change.
+    @ObservationIgnored private var resumeTask: Task<Void, Never>?
 
     private static let modifierMask = CGEventFlags.maskCommand.rawValue
         | CGEventFlags.maskAlternate.rawValue
@@ -72,12 +105,12 @@ final class AppCoordinator {
     }
 
     init(appState: AppState) {
+        self.appState = appState
         frecency = appState.frecency
-        picker = EmojiPickerModel(
-            catalog: appState.catalog, search: appState.search, frecency: appState.frecency
-        )
+        picker = appState.makePicker()
         panel = PickerPanelController(model: picker)
         detector = Self.makeDetector(sequence: AppSettings.triggerSequence, windowMs: AppSettings.triggerWindowMs)
+        emoticons = Self.makeEmoticons(emoticons: AppSettings.emoticonsEnabled, arrows: AppSettings.textArrowsEnabled)
 
         picker.onConfirm = { [weak self] emoji in
             guard let self else { return }
@@ -88,6 +121,11 @@ final class AppCoordinator {
             }
         }
         rememberExternalApp()
+
+        // The tap went blind (Secure Input, or disabled by macOS): keys typed meanwhile were
+        // never seen, so the typed length is unknown. Drop the query rather than over-delete.
+        secureInput.onChange = { [weak self] _ in self?.closeInline() }
+        tap.onDisabled = { [weak self] in self?.closeInline() }
 
         let center = NotificationCenter.default
         observers = [
@@ -107,6 +145,7 @@ final class AppCoordinator {
             },
         ]
         observeTrust()
+        syncPause()
         updateTap()
     }
 
@@ -114,13 +153,24 @@ final class AppCoordinator {
         TriggerDetector(sequence: sequence, keyWindow: TimeInterval(windowMs) / 1000)
     }
 
+    /// One detector for both typed conversions; an empty table while both are off.
+    private static func makeEmoticons(emoticons: Bool, arrows: Bool) -> EmoticonDetector {
+        var entries: [String: String] = [:]
+        if emoticons { entries.merge(EmoticonDetector.emoticons) { current, _ in current } }
+        if arrows { entries.merge(EmoticonDetector.arrows) { current, _ in current } }
+        return EmoticonDetector(entries: entries)
+    }
+
     // MARK: - Tap lifecycle
 
-    /// Runs the tap while Accessibility is granted and a tap-driven trigger is enabled.
+    /// Runs the tap while Accessibility is granted, a tap-driven feature is enabled and not paused.
     private func updateTap() {
         // `AXIsProcessTrusted()` too: `permission` stops polling once trusted, so it misses a revoke.
-        guard permission.isTrusted, AXIsProcessTrusted(), inlineEnabled || hotkeyEnabled else {
+        guard permission.isTrusted, AXIsProcessTrusted(), inlineEnabled || hotkeyEnabled || emoticonsEnabled || textArrowsEnabled,
+              !isPaused
+        else {
             if tap.isRunning { tap.stop() }
+            secureInput.stop()
             closeInline()
             return
         }
@@ -128,7 +178,7 @@ final class AppCoordinator {
         let started = tap.start { [weak self] type, event in
             self?.handle(type: type, event: event) ?? false
         }
-        if !started { scheduleRetry() }
+        if started { secureInput.start() } else { scheduleRetry() }
     }
 
     /// `tapCreate` can fail for a moment right after the grant; try again once a second.
@@ -156,6 +206,54 @@ final class AppCoordinator {
         }
     }
 
+    // MARK: - Pause
+
+    /// Stops the tap (inline, hotkey) for `duration`; the menubar picker keeps working.
+    func pause(for duration: TimeInterval = 3600) {
+        AppSettings.pausedUntil = Date().addingTimeInterval(duration)
+        syncPause()
+        updateTap()
+    }
+
+    /// Ends the pause now.
+    func resume() {
+        AppSettings.pausedUntil = nil
+        syncPause()
+        updateTap()
+    }
+
+    /// Mirrors `AppSettings.pausedUntil` (launch, popover, `defaults write`) and schedules the
+    /// auto-resume. A date already past is cleared from the settings.
+    private func syncPause() {
+        var until = AppSettings.pausedUntil
+        if let date = until, date <= Date() {
+            AppSettings.pausedUntil = nil
+            until = nil
+        }
+        guard until != pausedUntil else { return }
+        pausedUntil = until
+        scheduleResume()
+    }
+
+    /// One task at a time: sleeps until `pausedUntil`, then resumes.
+    private func scheduleResume() {
+        resumeTask?.cancel()
+        resumeTask = nil
+        guard let until = pausedUntil else { return }
+        resumeTask = Task { @MainActor [weak self] in
+            // Loops in case the wall clock moved back during the sleep.
+            while until.timeIntervalSinceNow > 0 {
+                do {
+                    try await Task.sleep(for: .seconds(until.timeIntervalSinceNow))
+                } catch {
+                    return  // Cancelled: the pause was changed or ended.
+                }
+            }
+            self?.syncPause()
+            self?.updateTap()
+        }
+    }
+
     /// Also fires for every frecency save: only rebuild the detector when its settings changed.
     private func settingsChanged() {
         hotkey = AppSettings.hotkey
@@ -174,6 +272,16 @@ final class AppCoordinator {
             triggerWindowMs = windowMs
         }
 
+        let emoticonsOn = AppSettings.emoticonsEnabled
+        let arrowsOn = AppSettings.textArrowsEnabled
+        if emoticonsOn != emoticonsEnabled || arrowsOn != textArrowsEnabled {
+            // A new detector: no candidate and no conversion to undo carry over.
+            emoticons = Self.makeEmoticons(emoticons: emoticonsOn, arrows: arrowsOn)
+            emoticonUndo = nil
+            emoticonsEnabled = emoticonsOn
+            textArrowsEnabled = arrowsOn
+        }
+
         let apps = Set(AppSettings.ignoredApps)
         if apps != ignoredApps {
             closeInline()
@@ -185,6 +293,19 @@ final class AppCoordinator {
             closeInline()
             ignoredDomains = domains
         }
+        let aliases = AppSettings.customAliases
+        if aliases != customAliases {
+            customAliases = aliases
+            appState.setCustomAliases(aliases)
+        }
+        let kinds = AppSettings.enabledKinds
+        if kinds != enabledKinds {
+            // The open inline panel would keep showing results of a turned-off kind.
+            closeInline()
+            enabledKinds = kinds
+            appState.setEnabledKinds(kinds)
+        }
+        syncPause()
         updateTap()
     }
 
@@ -229,14 +350,18 @@ final class AppCoordinator {
             return true
         }
 
-        guard inlineEnabled else { return false }
+        guard inlineEnabled || emoticonsEnabled || textArrowsEnabled else { return false }
         return handleInlineKey(event, keyCode: keyCode, isRepeat: isRepeat)
     }
 
-    /// Feeds the trigger detector; swallows only navigation / confirm keys of a visible inline panel.
+    /// Feeds the trigger and emoticon detectors; swallows only navigation / confirm keys of a visible
+    /// inline panel, the closing delimiter of an exact `::alias:` pick, the last key or terminator
+    /// of a converted emoticon or arrow, and the Backspace that undoes it.
     private func handleInlineKey(_ event: CGEvent, keyCode: UInt16, isRepeat: Bool) -> Bool {
-        // Typed into FastMoji's own windows (hotkey panel, menubar popover): not a host-app trigger.
-        if panel.mode == .hotkey || NSApp.isActive || NSApp.keyWindow != nil {
+        // Typed into FastMoji's own windows (hotkey panel, menubar popover, Settings): not a
+        // host-app trigger. Except the welcome window's test field, a real host field on purpose.
+        if panel.mode == .hotkey
+            || (NSApp.isActive || NSApp.keyWindow != nil) && !WelcomeWindowController.shared.isTestFieldFocused {
             closeInline()
             return false
         }
@@ -253,18 +378,25 @@ final class AppCoordinator {
             return false
         }
 
+        let now = Date()
+        let wasActive = detector.isActive
         switch keyCode {
-        case KeyCode.space, KeyCode.returnKey, KeyCode.enter:
-            feed(.boundary(at: Date()))
+        case KeyCode.space:
+            feed(.boundary(at: now))
+            return feedEmoticon(.space(at: now))
+        case KeyCode.returnKey, KeyCode.enter:
+            feed(.boundary(at: now))
+            feedEmoticon(.boundary(at: now))
         case KeyCode.backspace:
-            feed(.backspace(at: Date()))
+            feed(.backspace(at: now))
+            return feedEmoticon(.backspace(at: now), duringQuery: wasActive || detector.isActive)
         // Tab may autocomplete (e.g. `std` -> `std::`): what precedes the caret is unknown.
         case KeyCode.left, KeyCode.right, KeyCode.down, KeyCode.up,
              KeyCode.home, KeyCode.end, KeyCode.pageUp, KeyCode.pageDown,
              KeyCode.forwardDelete, KeyCode.escape, KeyCode.tab:
             closeInline()
         default:
-            feedCharacters(of: event)
+            return feedCharacters(of: event)
         }
         return false
     }
@@ -295,7 +427,8 @@ final class AppCoordinator {
     /// otherwise closes and lets the key through (e.g. `::` + Return is a plain newline).
     private func pickInlineSelection(_ keyCode: UInt16) -> Bool {
         // Switched to an input method mid-query: the typed length is unknown, delete nothing.
-        if Self.isInputMethodActive() {
+        // Secure Input on (e.g. a password field took the focus): never post keys into it.
+        if Self.isInputMethodActive() || IsSecureEventInputEnabled() {
             closeInline()
             return false
         }
@@ -307,9 +440,10 @@ final class AppCoordinator {
             if keyCode == KeyCode.tab {
                 closeInline()
             } else {
-                // The newline reaches the host: a trigger may start right after it.
+                // The newline reaches the host: a trigger or an emoticon may start right after it.
                 hideInline()
                 feed(.boundary(at: Date()))
+                feedEmoticon(.boundary(at: Date()))
             }
             return false
         }
@@ -324,7 +458,9 @@ final class AppCoordinator {
         return true
     }
 
-    private func feedCharacters(of event: CGEvent) {
+    /// Returns true to swallow the event (an exact `::alias:` pick, or the key that completes an
+    /// emoticon or arrow conversion).
+    private func feedCharacters(of event: CGEvent) -> Bool {
         var length = 0
         var buffer = [UniChar](repeating: 0, count: 8)
         event.keyboardGetUnicodeString(
@@ -334,15 +470,31 @@ final class AppCoordinator {
         // Dead keys and keys without text: the host text is unknown from here on.
         guard !text.isEmpty else {
             closeInline()
-            return
+            return false
         }
         let now = Date()
+        // A pick or a conversion swallows the whole event: only when its key is the only character,
+        // so no other typed character is lost and the deletion count matches what reached the host.
+        let allowsSwallow = text.count == 1
+        var swallow = false
         for char in text {
-            feed(.char(char, at: now))
+            let wasActive = detector.isActive
+            swallow = feed(.char(char, at: now), allowsPick: allowsSwallow)
+            // A pick already reset both detectors (`closeInline`).
+            if !swallow {
+                swallow = feedEmoticon(
+                    .char(char, at: now), duringQuery: wasActive || detector.isActive, allowsConvert: allowsSwallow
+                )
+            }
         }
+        return swallow
     }
 
-    private func feed(_ input: TriggerDetector.Input) {
+    /// Returns true to swallow the key, only for an exact `::alias:` pick (`allowsPick`).
+    /// A no-op while the inline trigger is off (the key path still runs for emoticons).
+    @discardableResult
+    private func feed(_ input: TriggerDetector.Input, allowsPick: Bool = false) -> Bool {
+        guard inlineEnabled else { return false }
         switch detector.feed(input) {
         case .none:
             break
@@ -354,7 +506,157 @@ final class AppCoordinator {
             DispatchQueue.main.async { [weak self] in self?.applyInlineQuery() }
         case .close:
             hideInline()
+        case let .delimiter(query, typedLength):
+            if allowsPick, pickExactAlias(query, deleting: typedLength) { return true }
+            // Unknown alias, or not safe to replace: closes like any other character.
+            hideInline()
         }
+        return false
+    }
+
+    /// `::alias:`: replaces the typed text with the emoji of an exact alias, decided synchronously
+    /// in the tap callback (a dictionary lookup). Returns false, touching nothing, when it cannot.
+    private func pickExactAlias(_ query: String, deleting typedLength: Int) -> Bool {
+        // The visible inline panel means the caret lookup finished: the password-field and
+        // ignored-website checks passed and `targetApp` is set. Typed faster than the lookup (or in
+        // a password field, or on an ignored website), the text stays as typed rather than risk
+        // deleting characters in the wrong place.
+        // Input methods compose text in the host: the typed length is unknown, delete nothing.
+        // Secure Input on: the panel's password-field check is stale, never post keys.
+        guard panel.mode == .inline,
+              let emoji = appState.search.exactMatch(query, kinds: enabledKinds),
+              !Self.isInputMethodActive(), !IsSecureEventInputEnabled()
+        else { return false }
+        closeInline()
+        // `typedLength` excludes the delimiter: it is swallowed and never reaches the host.
+        // Backspaces are posted inside the callback, as in `pickInlineSelection`.
+        deliver(emoji, action: AppSettings.inlineAction, deleting: typedLength, immediately: true)
+        // History is saved as JSON: out of the tap callback.
+        DispatchQueue.main.async { [weak self] in self?.frecency.record(emoji.emoji) }
+        return true
+    }
+
+    // MARK: - Emoticons
+
+    /// Returns true to swallow the key: the key that completes a conversion (its last key or its
+    /// terminator), or the Backspace that undoes one.
+    /// `duringQuery`: the trigger detector was or is active around this key, so the key belongs to
+    /// an inline query: the emoticon detector is reset instead, and `::` queries are never touched.
+    /// "Matching" alone does not count: with `::`, the first `:` of `:)` always starts a match.
+    /// `allowsConvert`: false when the key event typed more than one character, which must not
+    /// be swallowed (the other characters would be lost).
+    @discardableResult
+    private func feedEmoticon(
+        _ input: EmoticonDetector.Input, duringQuery: Bool = false, allowsConvert: Bool = true
+    ) -> Bool {
+        guard emoticonsEnabled || textArrowsEnabled else { return false }
+        if duringQuery || detector.isActive {
+            _ = emoticons.feed(.reset(at: Date()))
+            return false
+        }
+        switch emoticons.feed(input) {
+        case .none:
+            return false
+        case .candidate:
+            checkEmoticonField()
+            return false
+        case let .convert(conversion):
+            return allowsConvert && convertEmoticon(conversion)
+        case let .revert(deleting, text):
+            return revertEmoticon(deleting: deleting, text: text)
+        }
+    }
+
+    /// Checks the focused field off the main thread, as `locateCaret` does, while the emoticon is
+    /// still being typed. The tap callback only bumps the request id and starts the task.
+    private func checkEmoticonField() {
+        emoticonRequest += 1
+        let request = emoticonRequest
+        emoticonApproved = nil
+        let domains = ignoredDomains
+        Task { @MainActor [weak self] in
+            let isAllowed = await Task.detached(priority: .userInitiated) { () -> Bool in
+                if CaretLocator.focusedIsSecure() { return false }
+                if !domains.isEmpty, let host = CaretLocator.focusedWebHost(),
+                   AppSettings.isIgnored(host: host, domains: domains) {
+                    return false
+                }
+                return true
+            }.value
+            guard let self, request == self.emoticonRequest else { return }
+            self.emoticonApproved = isAllowed ? request : nil
+        }
+    }
+
+    /// The key that completes an emoticon or arrow, decided synchronously in the tap callback.
+    /// Returns false, touching nothing, when it cannot: the key then reaches the host and the text
+    /// stays as typed. Always inserts (the pick actions do not apply: the conversion replaces text in
+    /// place) and records nothing in the history: a conversion is not a pick.
+    private func convertEmoticon(_ conversion: EmoticonDetector.Conversion) -> Bool {
+        emoticonUndo = nil
+        // Focus check not finished (typed fast) or failed: leave the text rather than guess.
+        // Input methods compose text in the host: the typed length is unknown, delete nothing.
+        // Secure Input on: the check is stale, never post keys. Ignored apps bailed in `handleKeyDown`.
+        // FastMoji itself frontmost: only its welcome test field converts.
+        guard emoticonApproved == emoticonRequest, !isPaused,
+              !Self.isInputMethodActive(), !IsSecureEventInputEnabled(), AXIsProcessTrusted(),
+              let target = emoticonTarget(pid: nil)
+        else { return false }
+        emoticonApproved = nil
+        let method = AppSettings.insertionMethod
+        let pid = target.processIdentifier
+        // The backspaces and the text are posted inside the callback, as in `pickInlineSelection`:
+        // the swallowed key (last key or terminator) is part of `emitted` when it must be typed.
+        EmojiInserter.perform(
+            .insert, emoji: conversion.emitted, deleting: conversion.deleting, method: method,
+            isTargetFrontmost: { NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
+        )
+        emoticonUndo = EmoticonUndo(request: emoticonRequest, pid: pid, usedPaste: method == .paste)
+        emoticons.recordConversion(conversion, at: Date())
+        return true
+    }
+
+    /// The Backspace right after a conversion: deletes the emitted text and types the typed form
+    /// back, decided synchronously in the tap callback with every guard of the conversion checked
+    /// again. Returns false, touching nothing, when it cannot: the Backspace then reaches the host.
+    private func revertEmoticon(deleting count: Int, text: String) -> Bool {
+        guard let undo = emoticonUndo else { return false }
+        emoticonUndo = nil
+        guard undo.request == emoticonRequest, !isPaused,
+              !Self.isInputMethodActive(), !IsSecureEventInputEnabled(), AXIsProcessTrusted(),
+              emoticonTarget(pid: undo.pid) != nil
+        else { return false }
+        let isTargetFrontmost: @MainActor () -> Bool = {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == undo.pid
+        }
+        guard undo.usedPaste else {
+            // Typed text: plain keys, never the clipboard (the typed form is short ASCII).
+            EmojiInserter.perform(
+                .insert, emoji: text, deleting: count, method: .type, isTargetFrontmost: isTargetFrontmost
+            )
+            return true
+        }
+        // The pasted conversion may still be queued on the main queue: queue the undo behind it,
+        // so its backspaces never land before the paste. Accepted trade-off: if the focus changes
+        // within that one main-queue turn, the undo is dropped and the swallowed Backspace is lost.
+        DispatchQueue.main.async {
+            guard isTargetFrontmost() else { return }
+            EmojiInserter.perform(
+                .insert, emoji: text, deleting: count, method: .type, isTargetFrontmost: isTargetFrontmost
+            )
+        }
+        return true
+    }
+
+    /// The frontmost app when keys may be posted into it for a conversion or its undo: never
+    /// FastMoji itself, except its welcome test field. `pid`: the app must be that one too.
+    private func emoticonTarget(pid: pid_t?) -> NSRunningApplication? {
+        guard let target = NSWorkspace.shared.frontmostApplication,
+              pid == nil || target.processIdentifier == pid,
+              target.processIdentifier != ProcessInfo.processInfo.processIdentifier
+                || WelcomeWindowController.shared.isTestFieldFocused
+        else { return nil }
+        return target
     }
 
     /// Mouse events are never swallowed.
@@ -385,6 +687,8 @@ final class AppCoordinator {
             // Off the main run loop, which also serves the event tap.
             // `CaretLocator.axCaretRect` must stay read-only: it runs while the user keeps typing.
             let lookup = await Task.detached(priority: .userInitiated) { () -> CaretLookup? in
+                // Password field: no picker in either mode.
+                if CaretLocator.focusedIsSecure() { return nil }
                 if !domains.isEmpty, let host = CaretLocator.focusedWebHost(),
                    AppSettings.isIgnored(host: host, domains: domains) {
                     return nil
@@ -393,7 +697,8 @@ final class AppCoordinator {
             }.value
             guard let self, self.locatingCaret == mode, request == self.caretRequest else { return }
             self.locatingCaret = nil
-            // Ignored domain: reset the detector so it stops collecting a query.
+            // Password field or ignored domain: show nothing, and reset the detector so it stops
+            // collecting a query (a no-op for the hotkey, which closed the inline state already).
             guard let lookup else {
                 self.closeInline()
                 return
@@ -502,9 +807,14 @@ final class AppCoordinator {
         if panel.mode == .inline { panel.hide() }
     }
 
-    /// Resets the detector and hides the inline panel; the host text is left as typed.
+    /// Resets both detectors and hides the inline panel; the host text is left as typed.
+    /// Every reason the host text before the caret becomes unknown goes through here (blind tap,
+    /// app switch, click, navigation or modified key, ...), so it resets the emoticon detector too.
     private func closeInline() {
         _ = detector.feed(.reset)
+        // Also drops the conversion a Backspace could undo.
+        _ = emoticons.feed(.reset(at: Date()))
+        emoticonUndo = nil
         hideInline()
     }
 
@@ -513,7 +823,8 @@ final class AppCoordinator {
         let typedLength = detector.typedLength
         closeInline()
         // Switched to an input method mid-query: the typed length is unknown, copy instead.
-        if Self.isInputMethodActive() {
+        // Same when Secure Input is on: never post keys into a password field.
+        if Self.isInputMethodActive() || IsSecureEventInputEnabled() {
             targetApp = nil
             EmojiInserter.copy(emoji.toned(AppSettings.skinTone))
             return
@@ -550,10 +861,12 @@ final class AppCoordinator {
     private func deliver(_ emoji: Emoji, action: PickAction, deleting count: Int, immediately: Bool = false) {
         let target = targetApp
         targetApp = nil
-        // Picked from FastMoji's own window: there is no host field. Without Accessibility the
-        // synthesized keys are dropped. No target: nowhere safe to type. Copy so the emoji is not lost.
+        // Picked from FastMoji's own window: there is no host field (except the welcome test field).
+        // Without Accessibility the synthesized keys are dropped. No target: nowhere safe to type.
+        // Copy so the emoji is not lost.
         guard action != .copy, let target, AXIsProcessTrusted(),
               target.processIdentifier != ProcessInfo.processInfo.processIdentifier
+                || WelcomeWindowController.shared.isTestFieldFocused
         else {
             EmojiInserter.copy(emoji.toned(AppSettings.skinTone))
             return

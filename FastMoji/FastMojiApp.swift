@@ -11,7 +11,7 @@ struct FastMojiApp: App {
         MenuBarExtra(isInserted: $menubarEnabled) {
             MenuBarRoot(appDelegate: appDelegate)
         } label: {
-            Image(.menuBarIcon)
+            MenuBarLabel(appDelegate: appDelegate)
         }
         .menuBarExtraStyle(.window)
     }
@@ -27,6 +27,44 @@ private struct MenuBarRoot: View {
             coordinator: appDelegate.coordinator,
             updater: appDelegate.updater
         )
+    }
+}
+
+/// Status item icon: the logo, dimmed while paused, with a lock badge while Secure Input is on.
+/// Composed as one NSImage: the status item keeps only the label's image, not SwiftUI modifiers.
+private struct MenuBarLabel: View {
+    let appDelegate: AppDelegate
+
+    var body: some View {
+        // Read in the body so the label updates once the coordinator exists and on each change.
+        let paused = appDelegate.coordinator?.isPaused ?? false
+        let secure = appDelegate.coordinator?.secureInput.isOn ?? false
+        if paused || secure {
+            Image(nsImage: Self.icon(dimmed: paused, locked: secure && !paused))
+        } else {
+            Image(.menuBarIcon)
+        }
+    }
+
+    /// Drawn lazily at draw time, so the badge color follows the menubar appearance.
+    private static func icon(dimmed: Bool, locked: Bool) -> NSImage {
+        let logo = NSImage(resource: .menuBarIcon)
+        return NSImage(size: logo.size, flipped: false) { rect in
+            logo.draw(in: rect, from: .zero, operation: .sourceOver, fraction: dimmed ? 0.4 : 1)
+            guard locked,
+                  let lock = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: nil)?
+                      .withSymbolConfiguration(.init(paletteColors: [.labelColor])) else { return true }
+            let height = rect.height / 2
+            let width = height * lock.size.width / max(lock.size.height, 1)
+            let badge = NSRect(x: rect.maxX - width, y: rect.minY, width: width, height: height)
+            // Clear a margin around the badge so the lock stays readable on the colored logo.
+            NSGraphicsContext.current?.compositingOperation = .destinationOut
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: badge.insetBy(dx: -1, dy: -1), xRadius: 2, yRadius: 2).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            lock.draw(in: badge)
+            return true
+        }
     }
 }
 
@@ -47,6 +85,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.coordinator = coordinator
         SettingsWindowController.shared.configure(frecency: appState.frecency, permission: coordinator.permission,
                                                   updater: updater)
+        WelcomeWindowController.shared.configure(permission: coordinator.permission)
+        // Once per install: new users and 0.1.x upgraders alike (the key defaults to false).
+        if !AppSettings.welcomeShown {
+            AppSettings.welcomeShown = true
+            WelcomeWindowController.shared.show()
+        }
         updater.start()
     }
 

@@ -23,7 +23,17 @@ struct PanelContentView: View {
                 // Tooltips hang below the header: draw them over the grid.
                 .zIndex(1)
             Divider()
-            EmojiGridView(model: model)
+            // The inline picker has no tabs: it always browses emoji.
+            EmojiGridView(model: model, showsTabs: state.mode == .hotkey)
+        }
+        // Hotkey and inline share the model: don't leave the inline panel on another tab (the model
+        // clamps to the first enabled tab when Emoji is off). No sliding: `disablesAnimations` also
+        // stops the `.animation(_:value:)` modifiers, which `Transaction(animation: nil)` doesn't.
+        .onChange(of: state.mode, initial: true) { _, mode in
+            guard mode == .inline else { return }
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { model.tab = .emoji }
         }
         .capsuleButtons()
         .background(WindowAccessor(box: window))

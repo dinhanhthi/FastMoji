@@ -19,8 +19,13 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.hotkeyAction) private var hotkeyAction = PickAction.insert
     @AppStorage(AppSettings.Key.menubarEnabled) private var menubarEnabled = true
     @AppStorage(AppSettings.Key.menubarAction) private var menubarAction = PickAction.copy
+    @AppStorage(AppSettings.Key.emoticonsEnabled) private var emoticonsEnabled = false
+    @AppStorage(AppSettings.Key.textArrowsEnabled) private var textArrowsEnabled = false
     @AppStorage(AppSettings.Key.insertionMethod) private var insertionMethod = InsertionMethod.type
     @AppStorage(AppSettings.Key.skinTone) private var skinTone = SkinTone.none
+    @AppStorage(AppSettings.Key.emojiKindEnabled) private var emojiKindEnabled = true
+    @AppStorage(AppSettings.Key.symbolsKindEnabled) private var symbolsKindEnabled = true
+    @AppStorage(AppSettings.Key.kaomojiKindEnabled) private var kaomojiKindEnabled = true
 
     /// Edited text of the trigger field; committed on Return or blur, never while typing
     /// (editing "::" to ";;" must not save ":" on the way).
@@ -35,12 +40,17 @@ struct SettingsView: View {
     @State private var ignoredApps = AppSettings.ignoredApps
     @State private var ignoredDomains = AppSettings.ignoredDomains
     @State private var domainDraft = ""
+    @State private var customAliases = AppSettings.customAliases
+    @State private var aliasDraft = ""
+    @State private var aliasTextDraft = ""
+    /// Alias of the entry the form is editing (its original name, kept through a rename); nil when adding.
+    @State private var editingAlias: String?
 
     /// Same bounds as the stored value's clamp.
     private static let triggerWindowSlider = Double(AppSettings.triggerWindowRange.lowerBound)...Double(AppSettings.triggerWindowRange.upperBound)
 
     enum Pane: String, CaseIterable, Identifiable {
-        case general, triggers, insertion, ignored
+        case general, triggers, insertion, aliases, ignored
 
         var id: Self { self }
 
@@ -49,6 +59,7 @@ struct SettingsView: View {
             case .general: "General"
             case .triggers: "Triggers"
             case .insertion: "Insertion"
+            case .aliases: "Aliases"
             case .ignored: "Ignored"
             }
         }
@@ -58,6 +69,7 @@ struct SettingsView: View {
             case .general: "gearshape"
             case .triggers: "bolt"
             case .insertion: "text.cursor"
+            case .aliases: "text.badge.plus"
             case .ignored: "nosign"
             }
         }
@@ -72,10 +84,16 @@ struct SettingsView: View {
                 case .general: general
                 case .triggers: triggers
                 case .insertion: insertion
+                case .aliases: aliases
                 case .ignored: ignored
                 }
             }
             .formStyle(.grouped)
+            // The transparent title bar's safe area (32 pt) plus the grouped Form's own top margin
+            // (20 pt) left 52 pt above the first section. Run under the title bar (the detail column
+            // is clear of the traffic lights) and add back 6 pt: 26 pt, half of it.
+            .ignoresSafeArea(.container, edges: .top)
+            .contentMargins(.top, 6, for: .scrollContent)
             .toggleStyle(LightSwitchToggleStyle())
             .navigationTitle((pane ?? .general).title)
         }
@@ -190,6 +208,23 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Menubar", description: menubarDescription)
         }
+
+        // Not a trigger: it never opens the picker, so the lock-out guard ignores it.
+        Section {
+            // Verbatim: keeps ":)" out of Markdown and localization.
+            Toggle(isOn: $emoticonsEnabled) { Text(verbatim: "Convert emoticons like :) to emoji") }
+            Toggle(isOn: $textArrowsEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: "Convert text arrows and symbols like -> to → and >= to ≥")
+                    Text(verbatim: "Also changes code such as => -> >= <= in editors, and -- before a space (--help stays); add them to Ignored or press Backspace to undo.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        } header: {
+            sectionHeader("Emoticons", description: "Emoticons like :) ;) convert as you type them; :D, xD and <3 after a space or punctuation. Text arrows and symbols: -> => <- <-> <=> >= <=, and -- for an em dash after a space or punctuation. Backspace right after a conversion undoes it. Off by default.")
+        }
     }
 
     private var menubarDescription: String {
@@ -303,6 +338,138 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Aliases
+
+    @ViewBuilder
+    private var aliases: some View {
+        Section {
+            TextField("Alias", text: $aliasDraft, prompt: Text("shrug"))
+                .onSubmit { commitAlias() }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    // Verbatim: as Markdown, the backslash would be dropped.
+                    TextField("Text", text: $aliasTextDraft, prompt: Text(verbatim: "¯\\_(ツ)_/¯"))
+                        .onSubmit { commitAlias() }
+                    if editingAlias != nil {
+                        Button("Cancel") { cancelAliasEdit() }
+                    }
+                    Button(editingAlias == nil ? "Add" : "Update") { commitAlias() }
+                        .disabled(!canAddAlias)
+                }
+                if let aliasDraftError {
+                    Text(aliasDraftError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+        } header: {
+            sectionHeader("Custom aliases", description: aliasesDescription)
+        }
+
+        Section("Your aliases") {
+            if customAliases.isEmpty {
+                Text("None")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(customAliases) { entry in
+                HStack {
+                    Text(entry.alias)
+                        .monospaced()
+                    Image(systemName: "arrow.right")
+                        .foregroundStyle(.secondary)
+                    Text(entry.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer()
+                    editButton { editAlias(entry) }
+                    removeButton {
+                        if entry.alias == editingAlias { cancelAliasEdit() }
+                        setCustomAliases(customAliases.filter { $0.alias != entry.alias })
+                    }
+                }
+            }
+        }
+    }
+
+    /// Uses the current trigger: the closing delimiter is its last character.
+    private var aliasesDescription: String {
+        let sequence = AppSettings.triggerSequence
+        return "Type \(sequence)alias\(sequence.suffix(1)) or search for the alias to insert your own text, such as ¯\\_(ツ)_/¯ for shrug. Custom aliases win over built-in ones."
+    }
+
+    /// Alias draft as stored: trimmed and lowercased.
+    private var normalizedAliasDraft: String {
+        aliasDraft.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
+    private var canAddAlias: Bool {
+        aliasDraftError == nil && AppSettings.isValidCustomAlias(alias: normalizedAliasDraft, text: aliasTextDraft)
+    }
+
+    /// What is wrong with a non-empty draft field (the same checks as `AppSettings.isValidCustomAlias`).
+    private var aliasDraftError: String? {
+        let alias = normalizedAliasDraft
+        if !alias.isEmpty {
+            if alias.count > TriggerDetector.maxQueryLength || !alias.allSatisfy(TriggerDetector.isQueryCharacter) {
+                return "Alias: 1 to \(TriggerDetector.maxQueryLength) letters (a-z), digits, _ - or +."
+            }
+            // The entry being edited may keep its own name.
+            if alias != editingAlias, customAliases.contains(where: { $0.alias == alias }) {
+                return "\"\(alias)\" already exists. Edit it to change its text."
+            }
+        }
+        let text = aliasTextDraft
+        if !text.isEmpty {
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Text: enter something to insert."
+            }
+            if text.contains(where: \.isNewline) || text.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
+                return "Text: a single line, without control characters."
+            }
+            if text.utf16.count > AppSettings.maxCustomAliasTextLength {
+                return "Text: at most \(AppSettings.maxCustomAliasTextLength) characters."
+            }
+        }
+        return nil
+    }
+
+    /// Adds the draft, or while editing replaces the edited entry in place (a rename keeps its position).
+    private func commitAlias() {
+        guard canAddAlias else { return }
+        let entry = CustomAlias(alias: normalizedAliasDraft, text: aliasTextDraft)
+        var updated = customAliases
+        if let editingAlias {
+            guard let index = updated.firstIndex(where: { $0.alias == editingAlias }) else {
+                cancelAliasEdit()
+                return
+            }
+            updated[index] = entry
+        } else {
+            updated.append(entry)
+        }
+        setCustomAliases(updated)
+        cancelAliasEdit()
+    }
+
+    /// Fills the form with an existing entry and switches its button to Update.
+    private func editAlias(_ entry: CustomAlias) {
+        editingAlias = entry.alias
+        aliasDraft = entry.alias
+        aliasTextDraft = entry.text
+    }
+
+    /// Leaves editing mode (if any) and clears the form.
+    private func cancelAliasEdit() {
+        editingAlias = nil
+        aliasDraft = ""
+        aliasTextDraft = ""
+    }
+
+    private func setCustomAliases(_ aliases: [CustomAlias]) {
+        AppSettings.customAliases = aliases
+        customAliases = AppSettings.customAliases
+    }
+
     // MARK: - Ignored
 
     @ViewBuilder
@@ -368,6 +535,14 @@ struct SettingsView: View {
         } else {
             Label(bundleID, systemImage: "app.dashed")
         }
+    }
+
+    private func editButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "pencil")
+        }
+        .buttonStyle(.borderless)
+        .help("Edit")
     }
 
     private func removeButton(action: @escaping () -> Void) -> some View {
@@ -448,12 +623,27 @@ struct SettingsView: View {
                 }
             }
 
+            LabeledContent("Welcome") {
+                Button("Show Welcome…") { WelcomeWindowController.shared.show() }
+            }
+
             LabeledContent("History") {
                 Button("Clear history…", role: .destructive) { confirmingClear = true }
             }
             .confirmationDialog("Clear the Frequently Used history?", isPresented: $confirmingClear) {
                 Button("Clear history", role: .destructive) { frecency.clear() }
             }
+        }
+
+        Section {
+            Toggle("Emoji", isOn: $emojiKindEnabled)
+                .disabled(isLastKind(emojiKindEnabled))
+            Toggle("Symbols", isOn: $symbolsKindEnabled)
+                .disabled(isLastKind(symbolsKindEnabled))
+            Toggle("Kaomoji", isOn: $kaomojiKindEnabled)
+                .disabled(isLastKind(kaomojiKindEnabled))
+        } header: {
+            sectionHeader("Content", description: "Turned-off kinds are hidden from the pickers and search. Your custom aliases always work.")
         }
 
         Section {
@@ -468,6 +658,15 @@ struct SettingsView: View {
         } header: {
             sectionHeader("Emoji", description: "Applies to people, hands and body parts. Smileys have no skin tone in Unicode and stay yellow.")
         }
+    }
+
+    private var enabledKindCount: Int {
+        [emojiKindEnabled, symbolsKindEnabled, kaomojiKindEnabled].filter { $0 }.count
+    }
+
+    /// Lock-out guard: the last enabled kind cannot be turned off.
+    private func isLastKind(_ enabled: Bool) -> Bool {
+        enabled && enabledKindCount == 1
     }
 
     /// 👋 shown in each tone by the skin tone picker.

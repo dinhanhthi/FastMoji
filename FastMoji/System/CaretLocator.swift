@@ -95,6 +95,32 @@ enum CaretLocator {
         return ((url as! CFURL) as URL).host?.lowercased()
     }
 
+    /// True when the focused element is a password field (native `NSSecureTextField` or a web
+    /// `<input type="password">`). False when it cannot be read (no AX trust, timeout, nothing
+    /// focused): an unreadable element must not turn the picker off everywhere.
+    /// 3 AX round-trips of up to 0.2 s each: call it off the main thread, like `axCaretRect()`.
+    /// Read-only: it never sets AX attributes.
+    nonisolated static func focusedIsSecure() -> Bool {
+        let systemWide = AXUIElementCreateSystemWide()
+        // Applied globally when set on the system-wide element.
+        AXUIElementSetMessagingTimeout(systemWide, 0.2)
+
+        guard let focused = attribute(systemWide, kAXFocusedUIElementAttribute),
+              CFGetTypeID(focused) == AXUIElementGetTypeID()
+        else { return false }
+        let element = focused as! AXUIElement
+        return isSecureTextInput(
+            role: attribute(element, kAXRoleAttribute) as? String,
+            subrole: attribute(element, kAXSubroleAttribute) as? String
+        )
+    }
+
+    /// Password fields report `AXSecureTextField` as their subrole (role `AXTextField`);
+    /// some hosts report it as the role itself.
+    nonisolated static func isSecureTextInput(role: String?, subrole: String?) -> Bool {
+        role == kAXSecureTextFieldSubrole || subrole == kAXSecureTextFieldSubrole
+    }
+
     /// In a small field (e.g. Safari's address bar) the caret is shorter than the field, so a panel
     /// placed under the caret would cover the field: stretch it to the field's height, keeping its x.
     /// Large text views keep the caret line.

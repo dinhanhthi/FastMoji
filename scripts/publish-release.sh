@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# publish-release.sh — Tag + publish a FastMoji GitHub Release (docs/RELEASING.md §1).
+# publish-release.sh — Tag + publish a FastMoji GitHub Release.
 #
 # Runs after scripts/build-and-notarize.sh, once the notarized + stapled .zip exists.
 # Ties four things to ONE source of truth so they can never drift:
