@@ -19,14 +19,12 @@ enum MoveDirection {
 /// Read-only data shared by every picker, built once from `CatalogIndex.emojis` so sections,
 /// lookups and search results hold the same `Emoji` values (`firstIndex(of:)` stays consistent).
 final class PickerCatalog {
-    let search: EmojiSearch
     /// Glyph → emoji, to turn the frecency history back into emojis.
     let byEmoji: [String: Emoji]
     let categorySections: [PickerSection]
 
-    init(search: EmojiSearch) {
-        let emojis = search.index.emojis
-        self.search = search
+    init(index: CatalogIndex) {
+        let emojis = index.emojis
         byEmoji = Dictionary(emojis.map { ($0.emoji, $0) }, uniquingKeysWith: { first, _ in first })
         categorySections = Self.groupByCategory(emojis)
     }
@@ -70,10 +68,13 @@ final class EmojiPickerModel {
     @ObservationIgnored var onConfirm: ((Emoji) -> Void)?
 
     @ObservationIgnored private let catalog: PickerCatalog
+    /// Replaced, never mutated, when the custom aliases change (`replaceSearch(_:)`).
+    @ObservationIgnored private var search: EmojiSearch
     @ObservationIgnored private let frecency: FrecencyStore
 
-    init(catalog: PickerCatalog, frecency: FrecencyStore) {
+    init(catalog: PickerCatalog, search: EmojiSearch, frecency: FrecencyStore) {
         self.catalog = catalog
+        self.search = search
         self.frecency = frecency
         rebuild()
     }
@@ -156,6 +157,12 @@ final class EmojiPickerModel {
         resetCount += 1
     }
 
+    /// Swaps in `search` (new custom aliases) and reruns the current query.
+    func replaceSearch(_ search: EmojiSearch) {
+        self.search = search
+        rebuild()
+    }
+
     private func rebuild() {
         if query.isEmpty {
             let frequent = frecency.top(Self.frequentCount).compactMap { catalog.byEmoji[$0] }
@@ -165,7 +172,7 @@ final class EmojiPickerModel {
                 + catalog.categorySections
         } else {
             let frecency = self.frecency
-            let hits = catalog.search.search(query) { frecency.score($0) }
+            let hits = search.search(query) { frecency.score($0) }
             sections = hits.isEmpty ? [] : [PickerSection(id: "results", title: "Results", emojis: hits)]
         }
         selection = sections.isEmpty ? nil : PickerSelection(section: 0, index: 0)

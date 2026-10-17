@@ -93,6 +93,15 @@ struct KeyShortcut: Codable, Equatable {
     }
 }
 
+/// A user-defined `::alias:` that inserts `text`, stored as JSON under
+/// `AppSettings.Key.customAliases`.
+struct CustomAlias: Codable, Equatable, Identifiable {
+    var alias: String
+    var text: String
+
+    var id: String { alias }
+}
+
 /// User settings in `UserDefaults.standard`. `Key` constants are shared with `@AppStorage`;
 /// `registerDefaults()` makes both see the same defaults.
 enum AppSettings {
@@ -110,10 +119,13 @@ enum AppSettings {
         static let skinTone = "skinTone"
         static let ignoredApps = "ignoredApps"
         static let ignoredDomains = "ignoredDomains"
+        static let customAliases = "customAliases"
+        static let pausedUntil = "pausedUntil"
     }
 
     static let defaultTriggerSequence = "::"
     static let triggerWindowRange = 100...1000
+    static let maxCustomAliasTextLength = 200
 
     private static var store: UserDefaults { .standard }
 
@@ -132,6 +144,8 @@ enum AppSettings {
             Key.skinTone: SkinTone.none.rawValue,
             Key.ignoredApps: [String](),
             Key.ignoredDomains: [String](),
+            Key.customAliases: encode([CustomAlias]()) ?? Data(),
+            Key.pausedUntil: 0.0,
         ]
     }
 
@@ -226,6 +240,42 @@ enum AppSettings {
         }
     }
 
+    /// Valid entries only, first one wins for a duplicated alias.
+    static var customAliases: [CustomAlias] {
+        get {
+            guard let data = store.data(forKey: Key.customAliases),
+                  let aliases = try? JSONDecoder().decode([CustomAlias].self, from: data)
+            else { return [] }
+            return validCustomAliases(aliases)
+        }
+        set { store.set(encode(validCustomAliases(newValue)), forKey: Key.customAliases) }
+    }
+
+    /// End of a pause (stored as seconds since 1970, 0 = not paused), nil when not paused.
+    /// A date in the past is returned as is: the coordinator decides expiry.
+    static var pausedUntil: Date? {
+        get {
+            let seconds = store.double(forKey: Key.pausedUntil)
+            return seconds > 0 ? Date(timeIntervalSince1970: seconds) : nil
+        }
+        set { store.set(newValue?.timeIntervalSince1970 ?? 0, forKey: Key.pausedUntil) }
+    }
+
+    /// Alias: 1...`TriggerDetector.maxQueryLength` lowercase query characters, so that
+    /// `::alias:` can be typed. Text: not blank, a single line without control characters,
+    /// at most `maxCustomAliasTextLength` UTF-16 units.
+    static func isValidCustomAlias(alias: String, text: String) -> Bool {
+        let aliasValid = (1...TriggerDetector.maxQueryLength).contains(alias.count)
+            && alias.allSatisfy(TriggerDetector.isQueryCharacter)
+            && alias == alias.lowercased()
+        // Only Cc counts as control: Cf holds the ZWJ and flag tag characters emoji need.
+        let textValid = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !text.contains(where: \.isNewline)
+            && !text.unicodeScalars.contains { $0.properties.generalCategory == .control }
+            && text.utf16.count <= maxCustomAliasTextLength
+        return aliasValid && textValid
+    }
+
     /// 1 to 3 printable characters: no whitespace, no control character, no query character
     /// (a letter, digit, `_`, `-` or `+` could never be told apart from the query).
     static func isValidTriggerSequence(_ sequence: String) -> Bool {
@@ -270,6 +320,13 @@ enum AppSettings {
         return values.filter { seen.insert($0).inserted }
     }
 
+    private static func validCustomAliases(_ aliases: [CustomAlias]) -> [CustomAlias] {
+        var seen = Set<String>()
+        return aliases.filter {
+            isValidCustomAlias(alias: $0.alias, text: $0.text) && seen.insert($0.alias).inserted
+        }
+    }
+
     private static func clampedTriggerWindow(_ ms: Int) -> Int {
         min(max(ms, triggerWindowRange.lowerBound), triggerWindowRange.upperBound)
     }
@@ -280,7 +337,7 @@ enum AppSettings {
         store.string(forKey: key).flatMap(T.init(rawValue:)) ?? fallback
     }
 
-    private static func encode(_ shortcut: KeyShortcut) -> Data? {
-        try? JSONEncoder().encode(shortcut)
+    private static func encode<T: Encodable>(_ value: T) -> Data? {
+        try? JSONEncoder().encode(value)
     }
 }

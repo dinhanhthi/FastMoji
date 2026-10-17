@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Menubar popover: search field, shared emoji grid, Update or Check for Updates / Settings / About / Quit footer.
+/// Menubar popover: search field, shared emoji grid, Update / Pause and Check for Updates / Settings / About / Quit footer.
 /// Enter / click runs `AppSettings.menubarAction`.
 struct MenuBarContentView: View {
     let model: EmojiPickerModel
@@ -31,6 +31,14 @@ struct MenuBarContentView: View {
             Divider()
             if let permission, !permission.isTrusted {
                 accessibilityBanner(permission)
+                Divider()
+            }
+            if let coordinator, coordinator.isPaused, let until = coordinator.pausedUntil {
+                pausedBanner(until: until, coordinator)
+                Divider()
+            }
+            if let secureInput = coordinator?.secureInput, secureInput.isOn {
+                secureInputBanner
                 Divider()
             }
             EmojiGridView(model: model)
@@ -83,6 +91,34 @@ struct MenuBarContentView: View {
         .padding(.vertical, 6)
     }
 
+    /// The tap receives no keys while Secure Input is on: say why `::` does nothing.
+    private var secureInputBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lock.fill")
+                .foregroundStyle(.secondary)
+            Text("Secure Input is on: typing triggers are paused")
+                .font(.caption)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    /// Typing triggers and the hotkey are off until `until`; the picker above still works.
+    private func pausedBanner(until: Date, _ coordinator: AppCoordinator) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "pause.circle.fill")
+                .foregroundStyle(.secondary)
+            Text("Paused until \(until.formatted(date: .omitted, time: .shortened))")
+                .font(.caption)
+            Spacer(minLength: 0)
+            Button("Resume") { coordinator.resume() }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
     private var footer: some View {
         HStack(spacing: 8) {
             if updater.updateAvailable {
@@ -93,6 +129,16 @@ struct MenuBarContentView: View {
                     Label("Update", systemImage: "arrow.down.circle")
                 }
                 .foregroundStyle(.green)
+            }
+            // While paused, the pause row offers Resume instead.
+            if let coordinator, !coordinator.isPaused {
+                Button {
+                    coordinator.pause()
+                } label: {
+                    Image(systemName: "pause.circle")
+                }
+                .buttonStyle(HoverCapsuleButtonStyle(isCircle: true))
+                .help("Pause FastMoji for 1 hour")
             }
             Spacer()
             if !updater.updateAvailable {

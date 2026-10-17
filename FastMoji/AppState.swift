@@ -3,17 +3,39 @@ import Foundation
 /// App-wide shared state: one catalog, search index and history, created once at launch.
 @MainActor
 final class AppState {
-    /// Search, glyph lookup and sections shared by every picker (one index in RAM).
+    /// Glyph lookup and sections shared by every picker (one index in RAM).
     let pickerCatalog: PickerCatalog
+    /// Catalog index plus the user's custom aliases; replaced by `setCustomAliases(_:)`.
+    private(set) var search: EmojiSearch
     let frecency: FrecencyStore
     /// Picker shown by the menubar popover.
     let menuBarPicker: EmojiPickerModel
+    /// Every picker, so a new `search` reaches all of them. All live as long as the app.
+    private var pickers: [EmojiPickerModel]
 
     init() {
         AppSettings.registerDefaults()
         // The decoded rows (with keywords) are only needed to build the index, then freed.
-        pickerCatalog = PickerCatalog(search: EmojiSearch(index: CatalogIndex(catalog: EmojiCatalog.load())))
+        let index = CatalogIndex(catalog: EmojiCatalog.load())
+        pickerCatalog = PickerCatalog(index: index)
+        search = EmojiSearch(index: index, customAliases: AppSettings.customAliases)
         frecency = FrecencyStore()
-        menuBarPicker = EmojiPickerModel(catalog: pickerCatalog, frecency: frecency)
+        menuBarPicker = EmojiPickerModel(catalog: pickerCatalog, search: search, frecency: frecency)
+        pickers = [menuBarPicker]
+    }
+
+    /// A picker sharing the catalog, search and history, kept current by `setCustomAliases(_:)`.
+    func makePicker() -> EmojiPickerModel {
+        let picker = EmojiPickerModel(catalog: pickerCatalog, search: search, frecency: frecency)
+        pickers.append(picker)
+        return picker
+    }
+
+    /// Rebuilds only the custom layer over the shared index and pushes it to every picker.
+    func setCustomAliases(_ aliases: [CustomAlias]) {
+        search = EmojiSearch(index: search.index, customAliases: aliases)
+        for picker in pickers {
+            picker.replaceSearch(search)
+        }
     }
 }

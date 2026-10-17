@@ -72,4 +72,23 @@ struct TriggerDetectorTests {
         #expect(output == .close)
         #expect(!detector.isActive)
     }
+
+    @Test("closing `:` after a query yields the delimiter output without counting the `:`")
+    func closingDelimiterYieldsQueryAndTypedLength() {
+        var detector = TriggerDetector()
+
+        _ = detector.feed(.boundary(at: at(0)))
+        _ = detector.feed(.char(":", at: at(0.05)))
+        #expect(detector.feed(.char(":", at: at(0.1))) == .open)
+        for (index, char) in "smile".enumerated() {
+            _ = detector.feed(.char(char, at: at(0.15 + Double(index) * 0.05)))
+        }
+        #expect(detector.feed(.char(":", at: at(0.5))) == .delimiter(query: "smile", typedLength: 7))
+
+        // An empty query: `:::` closes instead.
+        _ = detector.feed(.boundary(at: at(1)))
+        _ = detector.feed(.char(":", at: at(1.05)))
+        #expect(detector.feed(.char(":", at: at(1.1))) == .open)
+        #expect(detector.feed(.char(":", at: at(1.15))) == .close)
+    }
 }

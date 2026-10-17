@@ -51,4 +51,15 @@ struct EmojiTests {
         // 👯 is Emoji 0.6, but its toned forms (skin_tones_version 17) are not drawable on 15.0.
         #expect(filtered.contains { $0.emoji == "👯" && $0.skinTonesVersion == 17 && $0.skinTones == nil })
     }
+
+    @Test("typed text is cut into key-event chunks of at most 20 UTF-16 units, between Characters")
+    func typedTextChunksKeepCharacters() {
+        let text = "( ͡° ͜ʖ ͡°)ヽ(°〇°)ﾉ¯\\_(ツ)_/¯👨‍👩‍👧‍👦🇻🇳🏴󠁧󠁢󠁳󠁣󠁴󠁿"
+        let chunks = EmojiInserter.chunks(of: text)
+        #expect(chunks.count > 1)
+        #expect(chunks.joined() == text)
+        #expect(chunks.allSatisfy { $0.utf16.count <= EmojiInserter.maxChunkLength })
+        // A split grapheme would add Characters.
+        #expect(chunks.reduce(0) { $0 + $1.count } == text.count)
+    }
 }

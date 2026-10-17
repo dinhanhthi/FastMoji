@@ -30,9 +30,12 @@ final class CatalogIndex: Sendable {
     fileprivate let fields: [[Field]]
     /// Folded alias → index in `emojis`. Aliases are globally unique, so first in catalog order wins.
     fileprivate let exact: [String: Int]
+    /// Glyph → index in `emojis`, so a custom alias whose text is a catalog glyph returns that entry.
+    fileprivate let glyphs: [String: Int]
 
     init(catalog: [Emoji]) {
         var exact: [String: Int] = [:]
+        glyphs = Dictionary(catalog.enumerated().map { ($1.emoji, $0) }, uniquingKeysWith: { first, _ in first })
         fields = catalog.enumerated().map { index, emoji in
             for alias in emoji.aliases {
                 let key = Self.fold(alias)
@@ -71,12 +74,58 @@ final class CatalogIndex: Sendable {
     }
 }
 
-/// Fuzzy subsequence search over the emoji catalog, ranked by text score then frecency.
+/// Fuzzy subsequence search over the emoji catalog and the user's custom aliases, ranked by text
+/// score then frecency. Immutable: a change of custom aliases builds a new one over the same index.
 struct EmojiSearch: Sendable {
     let index: CatalogIndex
 
+    /// A result is a slot: an index in `index.emojis`, or `index.emojis.count` + an index in
+    /// `synthesized` for a custom text that is not a catalog glyph.
+    private struct CustomField: Sendable {
+        let field: CatalogIndex.Field
+        let slot: Int
+    }
+
+    /// One folded alias field per custom alias, scored like a catalog alias.
+    private let customFields: [CustomField]
+    /// Results built for custom texts that are not catalog glyphs, one per distinct text.
+    private let synthesized: [Emoji]
+    /// Folded custom alias → slot; checked before the catalog's exact map.
+    private let customExact: [String: Int]
+
     init(index: CatalogIndex) {
+        self.init(index: index, customAliases: [])
+    }
+
+    /// Builds only the custom layer (microseconds); `index` is shared, never rebuilt.
+    init(index: CatalogIndex, customAliases: [CustomAlias]) {
         self.index = index
+        var slots: [String: Int] = [:]
+        var synthesized: [Emoji] = []
+        var fields: [CustomField] = []
+        var exact: [String: Int] = [:]
+        for custom in customAliases {
+            let key = CatalogIndex.fold(custom.alias)
+            guard exact[key] == nil else { continue }
+            // Aliases sharing a text share its slot, so the text is listed once (best score).
+            let slot: Int
+            if let known = slots[custom.text] ?? index.glyphs[custom.text] {
+                slot = known
+            } else {
+                slot = index.emojis.count + synthesized.count
+                synthesized.append(Emoji(
+                    emoji: custom.text, description: custom.alias, category: "Custom",
+                    aliases: [custom.alias], tags: []
+                ))
+            }
+            slots[custom.text] = slot
+            exact[key] = slot
+            let field = CatalogIndex.Field(scalars: Array(key.unicodeScalars), isAlias: true, weight: Score.aliasWeight)
+            fields.append(CustomField(field: field, slot: slot))
+        }
+        customFields = fields
+        self.synthesized = synthesized
+        customExact = exact
     }
 
     init(catalog: [Emoji]) {
@@ -89,24 +138,48 @@ struct EmojiSearch: Sendable {
         let q = Array(folded.unicodeScalars)
         guard !q.isEmpty else { return index.emojis }
 
-        var hits: [(index: Int, score: Double)] = []
+        var customScores: [Int: Double] = [:]
+        for custom in customFields {
+            guard let s = Self.score(q, in: custom.field) else { continue }
+            customScores[custom.slot] = max(customScores[custom.slot] ?? s, s)
+        }
+
+        // On equal text scores a custom match goes first, as in `exactMatch`.
+        var hits: [(slot: Int, score: Double, isCustom: Bool)] = []
+        func add(_ slot: Int, catalogScore: Double?) {
+            let custom = customScores[slot]
+            guard let best = custom.map({ max($0, catalogScore ?? $0) }) ?? catalogScore else { return }
+            let bonus = min(frecency(emoji(at: slot).emoji), Score.frecencyCap) * Score.frecencyFactor
+            hits.append((slot, best + max(0, bonus), custom == best))
+        }
         for (i, emojiFields) in index.fields.enumerated() {
             var best: Double?
             for field in emojiFields {
                 guard let s = Self.score(q, in: field) else { continue }
                 best = max(best ?? s, s)
             }
-            guard let best else { continue }
-            let bonus = min(frecency(index.emojis[i].emoji), Score.frecencyCap) * Score.frecencyFactor
-            hits.append((i, best + max(0, bonus)))
+            add(i, catalogScore: best)
         }
-        hits.sort { $0.score != $1.score ? $0.score > $1.score : $0.index < $1.index }
-        return hits.map { index.emojis[$0.index] }
+        for slot in customScores.keys where slot >= index.emojis.count {
+            add(slot, catalogScore: nil)
+        }
+        hits.sort {
+            if $0.score != $1.score { return $0.score > $1.score }
+            if $0.isCustom != $1.isCustom { return $0.isCustom }
+            return $0.slot < $1.slot
+        }
+        return hits.map { emoji(at: $0.slot) }
     }
 
-    /// The emoji whose alias is exactly `query` (folded), if any.
+    /// The emoji whose alias is exactly `query` (folded), if any. Custom aliases win over the catalog.
     func exactMatch(_ query: String) -> Emoji? {
-        index.exact[CatalogIndex.fold(query)].map { index.emojis[$0] }
+        let key = CatalogIndex.fold(query)
+        if let slot = customExact[key] { return emoji(at: slot) }
+        return index.exact[key].map { index.emojis[$0] }
+    }
+
+    private func emoji(at slot: Int) -> Emoji {
+        slot < index.emojis.count ? index.emojis[slot] : synthesized[slot - index.emojis.count]
     }
 
     /// Best subsequence score of `q` in `field`, trying every start position; nil if no match.

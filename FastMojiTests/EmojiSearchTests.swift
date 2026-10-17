@@ -59,5 +59,20 @@ struct EmojiSearchTests {
         let results = search.search("yeet", frecency: { _ in 0 })
 
         #expect(results.isEmpty)
+        // A contiguous in-word match still matches.
+        #expect(search.search("eetle", frecency: { _ in 0 }).map(\.emoji) == ["🐞"])
+    }
+
+    @Test("a custom alias wins over the catalog alias, and a non-catalog text is synthesized")
+    func customAliasOutranksCatalog() {
+        let cat = emoji("🐱", "cat face", aliases: ["cat"])
+        let customs = [
+            CustomAlias(alias: "cat", text: "🐈"),
+            CustomAlias(alias: "shrug", text: #"¯\_(ツ)_/¯"#),
+        ]
+        let search = EmojiSearch(index: CatalogIndex(catalog: [cat]), customAliases: customs)
+
+        #expect(search.exactMatch("cat")?.emoji == "🐈")
+        #expect(search.exactMatch("shrug")?.emoji == #"¯\_(ツ)_/¯"#)
     }
 }

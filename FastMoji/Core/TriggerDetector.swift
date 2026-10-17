@@ -17,6 +17,10 @@ struct TriggerDetector: Sendable {
         case open
         case query(String)
         case close
+        /// The closing delimiter (last character of the sequence) typed after a non-empty query,
+        /// e.g. `::smile:`. `typedLength` is the sequence plus the query: the delimiter itself is
+        /// swallowed, never typed, so it is not counted.
+        case delimiter(query: String, typedLength: Int)
     }
 
     private enum Phase: Sendable {
@@ -102,6 +106,12 @@ struct TriggerDetector: Sendable {
             if Self.isQueryCharacter(char), query.count < Self.maxQueryLength {
                 query.append(char)
                 return .query(query.lowercased())
+            }
+            // Never a query character (`AppSettings.isValidTriggerSequence`), so checked after.
+            if char == sequence.last, !query.isEmpty {
+                let output = Output.delimiter(query: query.lowercased(), typedLength: typedLength)
+                enterIdle()
+                return output
             }
             enterIdle()
             return .close

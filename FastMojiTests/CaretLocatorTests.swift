@@ -26,4 +26,12 @@ struct CaretLocatorTests {
         let textView = CGRect(x: 0, y: 60, width: 800, height: 600)
         #expect(CaretLocator.anchor(caret, in: textView) == caret)
     }
+
+    @Test("a secure text field is detected by its role or its subrole")
+    func secureTextFieldIsDetected() {
+        #expect(CaretLocator.isSecureTextInput(role: "AXSecureTextField", subrole: nil))
+        #expect(CaretLocator.isSecureTextInput(role: "AXTextField", subrole: "AXSecureTextField"))
+        #expect(!CaretLocator.isSecureTextInput(role: "AXTextField", subrole: nil))
+        #expect(!CaretLocator.isSecureTextInput(role: nil, subrole: nil))
+    }
 }

@@ -59,13 +59,36 @@ enum EmojiInserter {
         }
     }
 
+    /// One key event per chunk, posted synchronously in order (custom alias text can be long).
     private static func type(_ emoji: String) {
-        let utf16 = Array(emoji.utf16)
-        postKey(0) { event in
-            utf16.withUnsafeBufferPointer {
-                event.keyboardSetUnicodeString(stringLength: $0.count, unicodeString: $0.baseAddress!)
+        for chunk in chunks(of: emoji) {
+            let utf16 = Array(chunk.utf16)
+            postKey(0) { event in
+                utf16.withUnsafeBufferPointer {
+                    event.keyboardSetUnicodeString(stringLength: $0.count, unicodeString: $0.baseAddress!)
+                }
             }
         }
+    }
+
+    /// A key event carries at most about 20 UTF-16 units of text; the rest is dropped.
+    nonisolated static let maxChunkLength = 20
+
+    /// Splits `text` into chunks of at most `maxChunkLength` UTF-16 units, only between
+    /// Characters (never inside a surrogate pair or a ZWJ sequence). A single Character
+    /// longer than that (no emoji is) goes alone in its own chunk, possibly truncated.
+    nonisolated static func chunks(of text: String) -> [String] {
+        var chunks: [String] = []
+        var current = ""
+        for char in text {
+            if !current.isEmpty, current.utf16.count + char.utf16.count > maxChunkLength {
+                chunks.append(current)
+                current = ""
+            }
+            current.append(char)
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks
     }
 
     /// Pastes via cmd+V. Unless `keepOnClipboard`, the emoji is marked transient and the

@@ -35,12 +35,15 @@ struct SettingsView: View {
     @State private var ignoredApps = AppSettings.ignoredApps
     @State private var ignoredDomains = AppSettings.ignoredDomains
     @State private var domainDraft = ""
+    @State private var customAliases = AppSettings.customAliases
+    @State private var aliasDraft = ""
+    @State private var aliasTextDraft = ""
 
     /// Same bounds as the stored value's clamp.
     private static let triggerWindowSlider = Double(AppSettings.triggerWindowRange.lowerBound)...Double(AppSettings.triggerWindowRange.upperBound)
 
     enum Pane: String, CaseIterable, Identifiable {
-        case general, triggers, insertion, ignored
+        case general, triggers, insertion, aliases, ignored
 
         var id: Self { self }
 
@@ -49,6 +52,7 @@ struct SettingsView: View {
             case .general: "General"
             case .triggers: "Triggers"
             case .insertion: "Insertion"
+            case .aliases: "Aliases"
             case .ignored: "Ignored"
             }
         }
@@ -58,6 +62,7 @@ struct SettingsView: View {
             case .general: "gearshape"
             case .triggers: "bolt"
             case .insertion: "text.cursor"
+            case .aliases: "text.badge.plus"
             case .ignored: "nosign"
             }
         }
@@ -72,6 +77,7 @@ struct SettingsView: View {
                 case .general: general
                 case .triggers: triggers
                 case .insertion: insertion
+                case .aliases: aliases
                 case .ignored: ignored
                 }
             }
@@ -301,6 +307,102 @@ struct SettingsView: View {
         case .paste:
             "Puts the emoji on the clipboard, presses ⌘V, then restores your previous clipboard. Use it if an app (e.g. some terminals or remote desktops) shows the wrong character with Type."
         }
+    }
+
+    // MARK: - Aliases
+
+    @ViewBuilder
+    private var aliases: some View {
+        Section {
+            if customAliases.isEmpty {
+                Text("None")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(customAliases) { entry in
+                HStack {
+                    Text(entry.alias)
+                        .monospaced()
+                    Image(systemName: "arrow.right")
+                        .foregroundStyle(.secondary)
+                    Text(entry.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer()
+                    removeButton { setCustomAliases(customAliases.filter { $0.alias != entry.alias }) }
+                }
+            }
+            TextField("Alias", text: $aliasDraft, prompt: Text("shrug"))
+                .onSubmit { addAlias() }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    // Verbatim: as Markdown, the backslash would be dropped.
+                    TextField("Text", text: $aliasTextDraft, prompt: Text(verbatim: "¯\\_(ツ)_/¯"))
+                        .onSubmit { addAlias() }
+                    Button("Add") { addAlias() }
+                        .disabled(!canAddAlias)
+                }
+                if let aliasDraftError {
+                    Text(aliasDraftError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+        } header: {
+            sectionHeader("Custom aliases", description: aliasesDescription)
+        }
+    }
+
+    /// Uses the current trigger: the closing delimiter is its last character.
+    private var aliasesDescription: String {
+        let sequence = AppSettings.triggerSequence
+        return "Type \(sequence)alias\(sequence.suffix(1)) or search for the alias to insert your own text, such as ¯\\_(ツ)_/¯ for shrug. Custom aliases win over built-in ones."
+    }
+
+    /// Alias draft as stored: trimmed and lowercased.
+    private var normalizedAliasDraft: String {
+        aliasDraft.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
+    private var canAddAlias: Bool {
+        aliasDraftError == nil && AppSettings.isValidCustomAlias(alias: normalizedAliasDraft, text: aliasTextDraft)
+    }
+
+    /// What is wrong with a non-empty draft field (the same checks as `AppSettings.isValidCustomAlias`).
+    private var aliasDraftError: String? {
+        let alias = normalizedAliasDraft
+        if !alias.isEmpty {
+            if alias.count > TriggerDetector.maxQueryLength || !alias.allSatisfy(TriggerDetector.isQueryCharacter) {
+                return "Alias: 1 to \(TriggerDetector.maxQueryLength) letters (a-z), digits, _ - or +."
+            }
+            if customAliases.contains(where: { $0.alias == alias }) {
+                return "\"\(alias)\" already exists. Remove it first to change its text."
+            }
+        }
+        let text = aliasTextDraft
+        if !text.isEmpty {
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Text: enter something to insert."
+            }
+            if text.contains(where: \.isNewline) || text.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
+                return "Text: a single line, without control characters."
+            }
+            if text.utf16.count > AppSettings.maxCustomAliasTextLength {
+                return "Text: at most \(AppSettings.maxCustomAliasTextLength) characters."
+            }
+        }
+        return nil
+    }
+
+    private func addAlias() {
+        guard canAddAlias else { return }
+        setCustomAliases(customAliases + [CustomAlias(alias: normalizedAliasDraft, text: aliasTextDraft)])
+        aliasDraft = ""
+        aliasTextDraft = ""
+    }
+
+    private func setCustomAliases(_ aliases: [CustomAlias]) {
+        AppSettings.customAliases = aliases
+        customAliases = AppSettings.customAliases
     }
 
     // MARK: - Ignored
