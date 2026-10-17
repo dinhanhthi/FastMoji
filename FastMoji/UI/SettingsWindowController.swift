@@ -11,6 +11,7 @@ final class SettingsWindowController {
     private var permission: AccessibilityPermission?
     private var updater: Updater?
     private var window: NSWindow?
+    private var closeObserver: NSObjectProtocol?
 
     private init() {}
 
@@ -24,6 +25,8 @@ final class SettingsWindowController {
     /// Brings the window to the front, creating it on first use.
     func show() {
         guard let window = window ?? makeWindow() else { return }
+        // Dock icon only while Settings is open; closing the window hides it again.
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         // LSUIElement: activation alone does not always raise the window above other apps.
@@ -48,6 +51,11 @@ final class SettingsWindowController {
         hostingView.sizingOptions = []
         window.contentView = hostingView
         window.center()
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: window, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { _ = NSApp.setActivationPolicy(.accessory) }
+        }
         self.window = window
         return window
     }

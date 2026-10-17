@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - New app logo, now in the macOS 26 icon format. The menubar shows the colored logo instead of a smiley symbol.
+- FastMoji shows in the Dock while its Settings window is open.
 
 ## [0.1.2] - 2026-10-16
 
