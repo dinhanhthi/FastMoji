@@ -25,6 +25,7 @@
 - Insert, copy, or both, chosen per trigger
 - Customizable inline trigger and hotkey
 - Insert by typing or by pasting
+- Ignore FastMoji in chosen apps (inline trigger and hotkey) and on chosen websites (inline trigger)
 - Launch at login
 - Hide the menubar icon (reopen FastMoji from Finder or Spotlight to get back to Settings)
 

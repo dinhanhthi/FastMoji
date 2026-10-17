@@ -1,6 +1,7 @@
 import AppKit
 import ServiceManagement
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Content of the Settings window. Every control writes straight to `UserDefaults`
 /// (`AppSettings.Key`); the coordinator picks the changes up on `didChangeNotification`.
@@ -30,12 +31,16 @@ struct SettingsView: View {
     @State private var loginError: String?
     @State private var confirmingClear = false
     @State private var pane: Pane? = .general
+    /// Mirrors of the stored lists, re-read after each write so they show the normalized, deduplicated value.
+    @State private var ignoredApps = AppSettings.ignoredApps
+    @State private var ignoredDomains = AppSettings.ignoredDomains
+    @State private var domainDraft = ""
 
     /// Same bounds as the stored value's clamp.
     private static let triggerWindowSlider = Double(AppSettings.triggerWindowRange.lowerBound)...Double(AppSettings.triggerWindowRange.upperBound)
 
     enum Pane: String, CaseIterable, Identifiable {
-        case general, triggers, insertion
+        case general, triggers, insertion, ignored
 
         var id: Self { self }
 
@@ -44,6 +49,7 @@ struct SettingsView: View {
             case .general: "General"
             case .triggers: "Triggers"
             case .insertion: "Insertion"
+            case .ignored: "Ignored"
             }
         }
 
@@ -52,6 +58,7 @@ struct SettingsView: View {
             case .general: "gearshape"
             case .triggers: "bolt"
             case .insertion: "text.cursor"
+            case .ignored: "nosign"
             }
         }
     }
@@ -65,6 +72,7 @@ struct SettingsView: View {
                 case .general: general
                 case .triggers: triggers
                 case .insertion: insertion
+                case .ignored: ignored
                 }
             }
             .formStyle(.grouped)
@@ -288,6 +296,110 @@ struct SettingsView: View {
         case .paste:
             "Puts the emoji on the clipboard, presses ⌘V, then restores your previous clipboard. Use it if an app (e.g. some terminals or remote desktops) shows the wrong character with Type."
         }
+    }
+
+    // MARK: - Ignored
+
+    @ViewBuilder
+    private var ignored: some View {
+        Section {
+            if ignoredApps.isEmpty {
+                Text("None")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(ignoredApps, id: \.self) { bundleID in
+                HStack {
+                    appLabel(bundleID)
+                    Spacer()
+                    removeButton { setIgnoredApps(ignoredApps.filter { $0 != bundleID }) }
+                }
+            }
+            Button("Add App…") { addApps() }
+        } header: {
+            sectionHeader("Apps", description: "FastMoji ignores the inline trigger and the hotkey in these apps: their keys reach the app untouched. The menubar still works.")
+        }
+
+        Section {
+            if ignoredDomains.isEmpty {
+                Text("None")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(ignoredDomains, id: \.self) { domain in
+                HStack {
+                    Text(domain)
+                    Spacer()
+                    removeButton { setIgnoredDomains(ignoredDomains.filter { $0 != domain }) }
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    TextField("Domain", text: $domainDraft, prompt: Text("example.com"))
+                        .onSubmit { addDomain() }
+                    Button("Add") { addDomain() }
+                        .disabled(AppSettings.normalizedDomain(domainDraft) == nil)
+                }
+                if !domainDraft.isEmpty && AppSettings.normalizedDomain(domainDraft) == nil {
+                    Text("Enter a domain such as github.com.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+        } header: {
+            sectionHeader("Websites", description: "The inline trigger is off on these sites and their subdomains, e.g. github.com also covers gist.github.com. The hotkey still works. Works in Safari, Chrome-based browsers and Firefox.")
+        }
+    }
+
+    /// Icon and name of an installed app; the raw bundle ID when it is not installed.
+    @ViewBuilder
+    private func appLabel(_ bundleID: String) -> some View {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            HStack(spacing: 6) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .frame(width: 16, height: 16)
+                Text(FileManager.default.displayName(atPath: url.path))
+            }
+            .help(bundleID)
+        } else {
+            Label(bundleID, systemImage: "app.dashed")
+        }
+    }
+
+    private func removeButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "minus.circle")
+        }
+        .buttonStyle(.borderless)
+        .help("Remove")
+    }
+
+    private func addApps() {
+        let panel = NSOpenPanel()
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK else { return }
+        // FastMoji itself is never ignored: its own panel must keep working.
+        let added = panel.urls.compactMap { Bundle(url: $0)?.bundleIdentifier }
+            .filter { $0 != Bundle.main.bundleIdentifier }
+        setIgnoredApps(ignoredApps + added)
+    }
+
+    private func addDomain() {
+        guard let domain = AppSettings.normalizedDomain(domainDraft) else { return }
+        setIgnoredDomains(ignoredDomains + [domain])
+        domainDraft = ""
+    }
+
+    private func setIgnoredApps(_ apps: [String]) {
+        AppSettings.ignoredApps = apps
+        ignoredApps = AppSettings.ignoredApps
+    }
+
+    private func setIgnoredDomains(_ domains: [String]) {
+        AppSettings.ignoredDomains = domains
+        ignoredDomains = AppSettings.ignoredDomains
     }
 
     // MARK: - General

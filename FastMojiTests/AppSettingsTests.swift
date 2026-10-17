@@ -12,4 +12,22 @@ struct AppSettingsTests {
         #expect(KeyShortcut.validated(shiftOnly) == .default)
         #expect(KeyShortcut.validated(optionShift) == optionShift)
     }
+
+    @Test("a domain rule matches itself and its subdomains, not a look-alike")
+    func domainRuleCoversSubdomains() {
+        let domains = ["github.com"]
+
+        #expect(AppSettings.isIgnored(host: "github.com", domains: domains))
+        #expect(AppSettings.isIgnored(host: "gist.github.com", domains: domains))
+        #expect(!AppSettings.isIgnored(host: "notgithub.com", domains: domains))
+    }
+
+    @Test("pasted URLs and www. normalize to the bare host, garbage gives nil")
+    func domainInputNormalizes() {
+        #expect(AppSettings.normalizedDomain("https://www.GitHub.com/foo?x=1") == "github.com")
+        #expect(AppSettings.normalizedDomain("github.com:443/path") == "github.com")
+        #expect(AppSettings.normalizedDomain("") == nil)
+        #expect(AppSettings.normalizedDomain("a b") == nil)
+        #expect(AppSettings.normalizedDomain("foo..com") == nil)
+    }
 }

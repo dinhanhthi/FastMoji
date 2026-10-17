@@ -24,6 +24,8 @@ final class AppCoordinator {
     @ObservationIgnored private var inlineEnabled = AppSettings.inlineEnabled
     @ObservationIgnored private var triggerSequence = AppSettings.triggerSequence
     @ObservationIgnored private var triggerWindowMs = AppSettings.triggerWindowMs
+    @ObservationIgnored private var ignoredApps = Set(AppSettings.ignoredApps)
+    @ObservationIgnored private var ignoredDomains = AppSettings.ignoredDomains
     @ObservationIgnored private var detector: TriggerDetector
 
     /// App that was frontmost when a panel opened; receives the emoji.
@@ -169,6 +171,14 @@ final class AppCoordinator {
             triggerSequence = sequence
             triggerWindowMs = windowMs
         }
+
+        let apps = Set(AppSettings.ignoredApps)
+        if apps != ignoredApps {
+            closeInline()
+            ignoredApps = apps
+        }
+        let domains = AppSettings.ignoredDomains
+        if domains != ignoredDomains { ignoredDomains = domains }
         updateTap()
     }
 
@@ -191,6 +201,15 @@ final class AppCoordinator {
         let keyCode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
         let modifiers = UInt(event.flags.rawValue & Self.modifierMask)
         let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+
+        // Ignored app: every key reaches it untouched, the hotkey included.
+        // Not while the hotkey panel is open: its keys belong to FastMoji.
+        if !ignoredApps.isEmpty, panel.mode != .hotkey,
+           let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+           ignoredApps.contains(bundleID) {
+            closeInline()
+            return false
+        }
 
         // `hotkey.isValid`: never swallow plain keystrokes, even if validation upstream fails.
         // While Settings records a new shortcut, the current one must reach its key monitor.
@@ -354,12 +373,25 @@ final class AppCoordinator {
         caretRequest += 1
         let request = caretRequest
         locatingCaret = mode
+        // Ignored domains only turn the inline trigger off: the hotkey still works there.
+        let domains = mode == .inline ? ignoredDomains : []
         Task { @MainActor [weak self] in
             // Off the main run loop, which also serves the event tap.
             // `CaretLocator.axCaretRect` must stay read-only: it runs while the user keeps typing.
-            let lookup = await Task.detached(priority: .userInitiated) { CaretLocator.axCaretRect() }.value
+            let lookup = await Task.detached(priority: .userInitiated) { () -> CaretLookup? in
+                if !domains.isEmpty, let host = CaretLocator.focusedWebHost(),
+                   AppSettings.isIgnored(host: host, domains: domains) {
+                    return nil
+                }
+                return CaretLocator.axCaretRect()
+            }.value
             guard let self, self.locatingCaret == mode, request == self.caretRequest else { return }
             self.locatingCaret = nil
+            // Ignored domain: reset the detector so it stops collecting a query.
+            guard let lookup else {
+                self.closeInline()
+                return
+            }
             let caret = CaretLocator.screenRect(fromAX: lookup)
             switch mode {
             case .hotkey: self.showHotkeyPanel(at: caret)

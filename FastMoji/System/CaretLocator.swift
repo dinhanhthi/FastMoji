@@ -64,6 +64,37 @@ enum CaretLocator {
         return .none
     }
 
+    /// Lowercased host of the web page holding the focused element (`AXURL` of its outermost
+    /// `AXWebArea`), or nil when it is not in a web page or the page exposes no URL.
+    /// Outermost, so a composer inside a cross-origin iframe reports the page's host, not the iframe's.
+    /// Up to ~100 AX round-trips (50 ancestors) of up to 0.2 s each: call it off the main thread, like `axCaretRect()`.
+    /// Read-only: it never sets AX attributes.
+    nonisolated static func focusedWebHost() -> String? {
+        let systemWide = AXUIElementCreateSystemWide()
+        // Applied globally when set on the system-wide element.
+        AXUIElementSetMessagingTimeout(systemWide, 0.2)
+
+        guard let focused = attribute(systemWide, kAXFocusedUIElementAttribute),
+              CFGetTypeID(focused) == AXUIElementGetTypeID()
+        else { return nil }
+        var element = focused as! AXUIElement
+        var webArea: AXUIElement?
+        for _ in 0..<50 {
+            let role = attribute(element, kAXRoleAttribute) as? String
+            if role == kAXWindowRole || role == kAXApplicationRole { break }
+            if role == "AXWebArea" { webArea = element }
+            guard let parent = attribute(element, kAXParentAttribute),
+                  CFGetTypeID(parent) == AXUIElementGetTypeID()
+            else { break }
+            element = parent as! AXUIElement
+        }
+        guard let webArea,
+              let url = attribute(webArea, kAXURLAttribute),
+              CFGetTypeID(url) == CFURLGetTypeID()
+        else { return nil }
+        return ((url as! CFURL) as URL).host?.lowercased()
+    }
+
     /// In a small field (e.g. Safari's address bar) the caret is shorter than the field, so a panel
     /// placed under the caret would cover the field: stretch it to the field's height, keeping its x.
     /// Large text views keep the caret line.

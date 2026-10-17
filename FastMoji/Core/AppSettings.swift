@@ -108,6 +108,8 @@ enum AppSettings {
         static let inlineAction = "inlineAction"
         static let menubarEnabled = "menubarEnabled"
         static let skinTone = "skinTone"
+        static let ignoredApps = "ignoredApps"
+        static let ignoredDomains = "ignoredDomains"
     }
 
     static let defaultTriggerSequence = "::"
@@ -128,6 +130,8 @@ enum AppSettings {
             Key.inlineAction: PickAction.insert.rawValue,
             Key.menubarEnabled: true,
             Key.skinTone: SkinTone.none.rawValue,
+            Key.ignoredApps: [String](),
+            Key.ignoredDomains: [String](),
         ]
     }
 
@@ -208,6 +212,20 @@ enum AppSettings {
         set { store.set(newValue.rawValue, forKey: Key.skinTone) }
     }
 
+    /// Bundle IDs of the apps where neither the inline trigger nor the hotkey fires.
+    static var ignoredApps: [String] {
+        get { store.stringArray(forKey: Key.ignoredApps) ?? [] }
+        set { store.set(deduplicated(newValue), forKey: Key.ignoredApps) }
+    }
+
+    /// Domains (normalized) where the inline trigger is off; invalid entries are dropped.
+    static var ignoredDomains: [String] {
+        get { store.stringArray(forKey: Key.ignoredDomains) ?? [] }
+        set {
+            store.set(deduplicated(newValue.compactMap(normalizedDomain)), forKey: Key.ignoredDomains)
+        }
+    }
+
     /// 1 to 3 printable characters: no whitespace, no control character, no query character
     /// (a letter, digit, `_`, `-` or `+` could never be told apart from the query).
     static func isValidTriggerSequence(_ sequence: String) -> Bool {
@@ -215,6 +233,41 @@ enum AppSettings {
         return !sequence.isEmpty && sequence.count <= 3
             && !sequence.unicodeScalars.contains(where: invalid.contains)
             && !sequence.contains(where: TriggerDetector.isQueryCharacter)
+    }
+
+    /// Bare lowercase host from what a user types or pastes (`https://www.GitHub.com/x` →
+    /// `github.com`), nil if it is not a plausible domain.
+    static func normalizedDomain(_ input: String) -> String? {
+        var domain = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if domain.contains("://") {
+            domain = URL(string: domain)?.host ?? ""
+        } else if let end = domain.firstIndex(where: { "/?#".contains($0) }) {
+            domain = String(domain[..<end])
+        }
+        if let colon = domain.firstIndex(of: ":") {
+            domain = String(domain[..<colon])
+        }
+        if let prefix = ["www.", "*."].first(where: domain.hasPrefix) {
+            domain.removeFirst(prefix.count)
+        }
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789.-")
+        guard !domain.isEmpty, domain.allSatisfy(allowed.contains),
+              !domain.hasPrefix("."), !domain.hasSuffix("."),
+              !domain.hasPrefix("-"), !domain.hasSuffix("-"),
+              !domain.contains("..")
+        else { return nil }
+        return domain
+    }
+
+    /// A domain rule also covers its subdomains, but not look-alikes (`notgithub.com`).
+    static func isIgnored(host: String, domains: [String]) -> Bool {
+        let host = host.lowercased()
+        return domains.contains { host == $0 || host.hasSuffix("." + $0) }
+    }
+
+    private static func deduplicated(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { seen.insert($0).inserted }
     }
 
     private static func clampedTriggerWindow(_ ms: Int) -> Int {
