@@ -68,6 +68,7 @@ struct SettingsView: View {
                 }
             }
             .formStyle(.grouped)
+            .toggleStyle(LightSwitchToggleStyle())
             .navigationTitle((pane ?? .general).title)
         }
         .capsuleButtons()
@@ -379,5 +380,36 @@ struct SettingsView: View {
 
     private func refreshLoginStatus() {
         loginStatus = SMAppService.mainApp.status
+    }
+}
+
+/// Switch drawn in SwiftUI: the system switch (NSSwitch) allocates ~130 MB on its first render (macOS 27).
+private struct LightSwitchToggleStyle: ToggleStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack {
+            configuration.label
+            Spacer()
+            // A Button, not a tap gesture: keyboard navigation can focus it and Space toggles it.
+            Button { configuration.isOn.toggle() } label: {
+                Capsule()
+                    .fill(configuration.isOn ? Color.accentColor : Color.primary.opacity(0.15))
+                    .frame(width: 36, height: 20)
+                    .overlay(alignment: configuration.isOn ? .trailing : .leading) {
+                        Circle()
+                            .fill(.white)
+                            .shadow(color: .black.opacity(0.2), radius: 1, y: 0.5)
+                            .padding(2)
+                    }
+                    .opacity(isEnabled ? 1 : 0.5)
+                    .animation(.easeOut(duration: 0.15), value: configuration.isOn)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+        }
     }
 }
