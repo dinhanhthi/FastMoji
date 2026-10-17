@@ -17,11 +17,13 @@ import Foundation
 ///   within `keyWindow`: a slow sequence is more likely text being edited than a form typed in one go.
 /// - **When it converts.** Only an exact table entry converts (exact case), and as soon as the
 ///   match is unambiguous:
-///   - an entry that ends with a letter or digit (`:D`, `xD`, `<3`) waits for a terminator, so
-///     `:Da`, `xDog` or `<30` never convert;
-///   - an entry that is a proper prefix of a longer entry (`<-` in `<->`) waits for the next key:
-///     a terminator, or any other key that breaks the longer form (`<--` gives `←-`), converts it;
-///   - every other entry (`:)`, `->`, `<->`) converts on its last key.
+///   - an entry that ends with a letter or digit (`:D`, `xD`, `<3`), or is listed in
+///     `alwaysWaitsForTerminator` (`--`), waits for a terminator, so `:Da`, `xDog`, `<30` or
+///     `--help` never convert;
+///   - an entry that is a proper prefix of a longer entry (`<-` in `<->`, `<=` in `<=>`) waits
+///     for the next key: a terminator, or any other key that breaks the longer form (`<--` gives
+///     `←-`, `<=5` gives `≤5`), converts it;
+///   - every other entry (`:)`, `->`, `>=`, `<->`) converts on its last key.
 /// - **Terminators** are the space and `. , ! ? ; :`. They are swallowed by the coordinator and
 ///   typed again after the glyph. Return is not one: it cancels the candidate (re-posting a Return
 ///   would misfire in Enter-to-send apps) but is a start point for the next one.
@@ -99,14 +101,18 @@ struct EmoticonDetector: Sendable {
         "^^": "😊",
     ]
 
-    /// Text arrows (opt-in: they also show up in code). `<-` waits for the next key, since it
-    /// starts `<->`. Comparison operators (`<=`, `>=`, `!=`) are left out on purpose.
+    /// Text arrows and symbols (opt-in: they also show up in code). `<-` and `<=` wait for the
+    /// next key, since they start `<->` and `<=>`; `--` waits for a terminator (see
+    /// `alwaysWaitsForTerminator`). `!=` is left out on purpose.
     static let arrows: [String: String] = [
         "->": "→",
         "=>": "⇒",
         "<-": "←",
         "<->": "↔",
         "<=>": "⇔",
+        ">=": "≥",
+        "<=": "≤",
+        "--": "—",
     ]
 
     /// Toggles the inline code span; never part of an entry.
@@ -115,12 +121,15 @@ struct EmoticonDetector: Sendable {
     private static let openingCharacters: Set<Character> = ["(", "[", "{", "\"", "'"]
     /// Convert a waiting entry and are typed again after the glyph (the space is its own input).
     private static let terminators: Set<Character> = [".", ",", "!", "?", ";", ":"]
+    /// Entries that end with a symbol but still wait for a terminator: converting `--` on its
+    /// second `-` would break `--help`, Markdown `---` and `-->`.
+    private static let alwaysWaitsForTerminator: Set<String> = ["--"]
 
     private let entries: [String: String]
     /// Every non-empty proper prefix of an entry.
     private let prefixes: Set<String>
-    /// Entries that end with a letter or digit: they convert only on a terminator. This rule wins
-    /// over `waitsForLongerForm` if an entry matches both.
+    /// Entries that end with a letter or digit, or listed in `alwaysWaitsForTerminator`: they
+    /// convert only on a terminator. This rule wins over `waitsForLongerForm` if an entry matches both.
     private let waitsForTerminator: Set<String>
     /// Entries that are a proper prefix of a longer entry (`<-`): they convert on a terminator or
     /// on any key that breaks the longer form.
@@ -163,7 +172,7 @@ struct EmoticonDetector: Sendable {
             }
         }
         let waitsForTerminator = Set(entries.keys.filter { key in
-            key.last.map { $0.isLetter || $0.isNumber } ?? false
+            Self.alwaysWaitsForTerminator.contains(key) || (key.last.map { $0.isLetter || $0.isNumber } ?? false)
         })
         self.prefixes = prefixes
         self.waitsForTerminator = waitsForTerminator
