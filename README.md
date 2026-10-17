@@ -15,7 +15,7 @@
 ## How to use
 
 - **Inline**: type `::` followed by a search term (e.g. `::smile`) in any text field, then press Enter or Tab to replace it with the emoji. Type the full alias with a closing colon (e.g. `::smile:`) to insert it instantly.
-- **Hotkey**: press `⌘;` to open a popover at the caret, search, and press Enter to insert.
+- **Hotkey**: press `⌘;` to open the picker at the caret, search, and press Enter to insert.
 - **Menubar**: click the menubar icon, search, and press Enter to copy the emoji.
 
 In Cocoa apps, `⌘;` replaces the "Check Document Now" shortcut (Edit → Spelling and Grammar). You can change it in Settings → Triggers.
@@ -30,12 +30,13 @@ In Cocoa apps, `⌘;` replaces the "Check Document Now" shortcut (Edit → Spell
 - Search in English, Vietnamese, French and Spanish; accents are optional (e.g. `::cuoi`)
 - Emoji up to Unicode 17, showing only those your macOS can display
 - "Frequently Used" section when the search is empty
+- Default skin tone for people and hand emoji (Settings → General)
 - Insert, copy, or both, chosen per trigger
 - Customizable inline trigger and hotkey
 - Insert by typing or by pasting
 - Optional emoticon conversion, e.g. `:)` → 🙂 as you type it, `:D` → 😃 after a space or punctuation; Backspace right after undoes it (off by default, Settings → Triggers)
 - Optional text arrows and symbols, e.g. `->` → →, `<=>` → ⇔, `>=` → ≥, `<=` → ≤, `--` → — (em dash, after a space or punctuation); Backspace right after undoes it (off by default, Settings → Triggers; it also changes code)
-- Ignore FastMoji in chosen apps (inline trigger and hotkey) and on chosen websites (inline trigger)
+- Ignore FastMoji in chosen apps (inline trigger, hotkey and conversions) and on chosen websites (inline trigger and conversions)
 - Pause FastMoji for 1 hour from the menubar
 - Password fields are skipped
 - Secure Input indicator in the menubar icon and popover
@@ -49,7 +50,7 @@ FastMoji needs **Accessibility** access to read the caret position and type the 
 
 While another app turns on Secure Input (password fields, Terminal's Secure Keyboard Entry), macOS hides keystrokes from FastMoji, so the typing triggers pause. The menubar icon and popover show when this happens.
 
-The inline `::` trigger is paused while an input method such as Vietnamese Telex is active; use `⌘;` instead.
+The inline `::` trigger, emoticons and text arrows are paused while an input method such as Vietnamese Telex is active; use `⌘;` instead.
 
 ## Privacy
 
