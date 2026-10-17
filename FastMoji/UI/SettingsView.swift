@@ -19,6 +19,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.Key.hotkeyAction) private var hotkeyAction = PickAction.insert
     @AppStorage(AppSettings.Key.menubarEnabled) private var menubarEnabled = true
     @AppStorage(AppSettings.Key.menubarAction) private var menubarAction = PickAction.copy
+    @AppStorage(AppSettings.Key.emoticonsEnabled) private var emoticonsEnabled = false
     @AppStorage(AppSettings.Key.insertionMethod) private var insertionMethod = InsertionMethod.type
     @AppStorage(AppSettings.Key.skinTone) private var skinTone = SkinTone.none
 
@@ -195,6 +196,14 @@ struct SettingsView: View {
                 .disabled(!menubarEnabled)
         } header: {
             sectionHeader("Menubar", description: menubarDescription)
+        }
+
+        // Not a trigger: it never opens the picker, so the lock-out guard ignores it.
+        Section {
+            // Verbatim: keeps ":)" out of Markdown and localization.
+            Toggle(isOn: $emoticonsEnabled) { Text(verbatim: "Convert emoticons like :) to emoji") }
+        } header: {
+            sectionHeader("Emoticons", description: "Typed after a space, followed by a space: :) :( :D ;) :P <3 and more. Off by default.")
         }
     }
 
@@ -548,6 +557,10 @@ struct SettingsView: View {
                     Button("Check for Updates…") { updater.checkForUpdates() }
                         .disabled(!updater.canCheck)
                 }
+            }
+
+            LabeledContent("Welcome") {
+                Button("Show Welcome…") { WelcomeWindowController.shared.show() }
             }
 
             LabeledContent("History") {
