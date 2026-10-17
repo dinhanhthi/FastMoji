@@ -16,6 +16,33 @@ enum MoveDirection {
     case left, right, up, down
 }
 
+/// Read-only data shared by every picker, built once from `CatalogIndex.emojis` so sections,
+/// lookups and search results hold the same `Emoji` values (`firstIndex(of:)` stays consistent).
+final class PickerCatalog {
+    let search: EmojiSearch
+    /// Glyph → emoji, to turn the frecency history back into emojis.
+    let byEmoji: [String: Emoji]
+    let categorySections: [PickerSection]
+
+    init(search: EmojiSearch) {
+        let emojis = search.index.emojis
+        self.search = search
+        byEmoji = Dictionary(emojis.map { ($0.emoji, $0) }, uniquingKeysWith: { first, _ in first })
+        categorySections = Self.groupByCategory(emojis)
+    }
+
+    /// One section per category, in catalog order.
+    private static func groupByCategory(_ catalog: [Emoji]) -> [PickerSection] {
+        var order: [String] = []
+        var groups: [String: [Emoji]] = [:]
+        for emoji in catalog {
+            if groups[emoji.category] == nil { order.append(emoji.category) }
+            groups[emoji.category, default: []].append(emoji)
+        }
+        return order.map { PickerSection(id: "category-\($0)", title: $0, emojis: groups[$0] ?? []) }
+    }
+}
+
 /// Query, sections and keyboard selection shared by the menubar, hotkey and inline pickers.
 /// Navigation is driven by method calls (key monitor or event tap), never by view focus.
 @MainActor
@@ -42,16 +69,12 @@ final class EmojiPickerModel {
 
     @ObservationIgnored var onConfirm: ((Emoji) -> Void)?
 
-    @ObservationIgnored private let search: EmojiSearch
+    @ObservationIgnored private let catalog: PickerCatalog
     @ObservationIgnored private let frecency: FrecencyStore
-    @ObservationIgnored private let byEmoji: [String: Emoji]
-    @ObservationIgnored private let categorySections: [PickerSection]
 
-    init(catalog: [Emoji], search: EmojiSearch, frecency: FrecencyStore) {
-        self.search = search
+    init(catalog: PickerCatalog, frecency: FrecencyStore) {
+        self.catalog = catalog
         self.frecency = frecency
-        byEmoji = Dictionary(catalog.map { ($0.emoji, $0) }, uniquingKeysWith: { first, _ in first })
-        categorySections = Self.groupByCategory(catalog)
         rebuild()
     }
 
@@ -135,28 +158,17 @@ final class EmojiPickerModel {
 
     private func rebuild() {
         if query.isEmpty {
-            let frequent = frecency.top(Self.frequentCount).compactMap { byEmoji[$0] }
+            let frequent = frecency.top(Self.frequentCount).compactMap { catalog.byEmoji[$0] }
             sections = (frequent.isEmpty
                 ? []
                 : [PickerSection(id: "frequent", title: "Frequently Used", emojis: frequent)])
-                + categorySections
+                + catalog.categorySections
         } else {
             let frecency = self.frecency
-            let hits = search.search(query) { frecency.score($0) }
+            let hits = catalog.search.search(query) { frecency.score($0) }
             sections = hits.isEmpty ? [] : [PickerSection(id: "results", title: "Results", emojis: hits)]
         }
         selection = sections.isEmpty ? nil : PickerSelection(section: 0, index: 0)
         hasMoved = false
-    }
-
-    /// One section per category, in catalog order.
-    private static func groupByCategory(_ catalog: [Emoji]) -> [PickerSection] {
-        var order: [String] = []
-        var groups: [String: [Emoji]] = [:]
-        for emoji in catalog {
-            if groups[emoji.category] == nil { order.append(emoji.category) }
-            groups[emoji.category, default: []].append(emoji)
-        }
-        return order.map { PickerSection(id: "category-\($0)", title: $0, emojis: groups[$0] ?? []) }
     }
 }

@@ -26,9 +26,10 @@ struct TriggerDetector: Sendable {
         case active
     }
 
-    /// Longest query kept (`hand_with_index_finger_and_thumb_crossed`, the longest alias in
-    /// emoji.json, is 40). Longer closes, so a pick never deletes more than the sequence + 40.
-    static let maxQueryLength = 40
+    /// Longest query kept. The longest alias in emoji.json is 53 characters
+    /// (`persona_en_silla_de_ruedas_electrica_hacia_la_derecha`, es cldr); 64 leaves headroom.
+    /// Longer closes, so a pick never deletes more than the sequence + 64.
+    static let maxQueryLength = 64
 
     private let sequence: [Character]
     private let keyWindow: TimeInterval

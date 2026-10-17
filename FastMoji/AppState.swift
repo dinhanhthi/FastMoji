@@ -3,17 +3,17 @@ import Foundation
 /// App-wide shared state: one catalog, search index and history, created once at launch.
 @MainActor
 final class AppState {
-    let catalog: [Emoji]
-    let search: EmojiSearch
+    /// Search, glyph lookup and sections shared by every picker (one index in RAM).
+    let pickerCatalog: PickerCatalog
     let frecency: FrecencyStore
     /// Picker shown by the menubar popover.
     let menuBarPicker: EmojiPickerModel
 
     init() {
         AppSettings.registerDefaults()
-        catalog = EmojiCatalog.load()
-        search = EmojiSearch(catalog: catalog)
+        // The decoded rows (with keywords) are only needed to build the index, then freed.
+        pickerCatalog = PickerCatalog(search: EmojiSearch(index: CatalogIndex(catalog: EmojiCatalog.load())))
         frecency = FrecencyStore()
-        menuBarPicker = EmojiPickerModel(catalog: catalog, search: search, frecency: frecency)
+        menuBarPicker = EmojiPickerModel(catalog: pickerCatalog, frecency: frecency)
     }
 }

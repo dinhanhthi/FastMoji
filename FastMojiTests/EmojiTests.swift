@@ -1,10 +1,12 @@
+import Foundation
 import Testing
 @testable import FastMoji
 
 struct EmojiTests {
     /// Real catalog entries, so a regenerated `emoji.json` without `skin_tones` fails too.
+    /// A fixed `maxVersion` keeps the tests independent of the macOS they run on.
     private static let catalog = Dictionary(
-        EmojiCatalog.load().map { ($0.emoji, $0) },
+        EmojiCatalog.load(maxVersion: 17.0).map { ($0.emoji, $0) },
         uniquingKeysWith: { first, _ in first }
     )
 
@@ -29,5 +31,24 @@ struct EmojiTests {
 
         #expect(wave.toned(.none) == "👋")
         #expect(grinning.toned(.dark) == "😀")
+    }
+
+    @Test("the macOS version picks the newest drawable Emoji version, and newer rows are dropped")
+    func osVersionFiltersNewerEmoji() {
+        func os(_ major: Int, _ minor: Int) -> OperatingSystemVersion {
+            OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: 0)
+        }
+        #expect(EmojiCatalog.maxEmojiVersion(for: os(14, 0)) == 15.0)
+        #expect(EmojiCatalog.maxEmojiVersion(for: os(15, 4)) == 16.0)
+        #expect(EmojiCatalog.maxEmojiVersion(for: os(26, 4)) == 17.0)
+
+        let all = EmojiCatalog.load(maxVersion: 17.0)
+        let filtered = EmojiCatalog.load(maxVersion: 15.0)
+
+        #expect(all.contains { ($0.version ?? 0) > 15.0 })
+        #expect(filtered.allSatisfy { ($0.version ?? 0) <= 15.0 })
+        #expect(filtered.count == all.filter { ($0.version ?? 0) <= 15.0 }.count)
+        // 👯 is Emoji 0.6, but its toned forms (skin_tones_version 17) are not drawable on 15.0.
+        #expect(filtered.contains { $0.emoji == "👯" && $0.skinTonesVersion == 17 && $0.skinTones == nil })
     }
 }

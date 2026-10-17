@@ -73,9 +73,7 @@ final class AppCoordinator {
 
     init(appState: AppState) {
         frecency = appState.frecency
-        picker = EmojiPickerModel(
-            catalog: appState.catalog, search: appState.search, frecency: appState.frecency
-        )
+        picker = EmojiPickerModel(catalog: appState.pickerCatalog, frecency: appState.frecency)
         panel = PickerPanelController(model: picker)
         detector = Self.makeDetector(sequence: AppSettings.triggerSequence, windowMs: AppSettings.triggerWindowMs)
 

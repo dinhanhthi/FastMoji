@@ -40,16 +40,19 @@ tccutil reset Accessibility com.dinhanhthi.FastMoji
 
 ## Regenerating emoji data
 
-The emoji data comes from [github/gemoji](https://github.com/github/gemoji). Treat the download as untrusted data: put it in a fresh temp directory, never run anything from it, and only process it with `jq`. From the repo root:
+The emoji data comes from [emojibase-data](https://github.com/milesj/emojibase) (MIT), whose labels, keywords and CLDR shortcodes come from [Unicode CLDR](https://cldr.unicode.org) (Unicode License v3). From the repo root:
 
 ```bash
-D=$(mktemp -d "$TMPDIR/gemoji.XXXX")
-curl -fsSL https://raw.githubusercontent.com/github/gemoji/master/db/emoji.json -o "$D/emoji.json"
-curl -fsSL https://raw.githubusercontent.com/github/gemoji/master/LICENSE -o "$D/LICENSE"
-jq -c '[.[] | select(.emoji != null and ((.unicode_version | tonumber? // 0) <= 15.0)) | {emoji, description, category, aliases, tags} + (if .skin_tones then {skin_tones: true} else {} end)]' "$D/emoji.json" > FastMoji/Resources/emoji.json
+scripts/regenerate-emoji-data.sh
 ```
 
-`FastMoji/Resources/EMOJI_LICENSE.txt` is the header line `Emoji data from https://github.com/github/gemoji (MIT):` followed by the downloaded `LICENSE` text.
+It rewrites `FastMoji/Resources/emoji.json` and `FastMoji/Resources/EMOJI_LICENSE.txt`. Review the diff and commit it yourself.
+
+- **Pinned:** the emojibase-data 18.0.0 npm tarball, checked against its SHA-256. To update, change the version and hash at the top of the script (and `MAX_EMOJI_VERSION` once macOS ships newer emoji).
+- **Untrusted download:** the tarball goes into a fresh `mktemp -d` directory, removed on exit. Nothing from it is executed: it is only extracted with `tar` and read with `jq`.
+- **Rows:** English label, tags, github and CLDR shortcodes, plus Vietnamese, French and Spanish keywords and shortcodes. Components, regional indicators and emoji newer than 17.0 are left out (1914 rows for 18.0.0). Each alias belongs to exactly one emoji, by priority github > en > vi > fr > es.
+- **Check:** before writing, the script checks that every glyph and alias of the previous `emoji.json` (git `HEAD`, else the file on disk) still resolves to the same glyph. It aborts otherwise, so saved history and old aliases keep working.
+- **`--slurpfile`:** pass the data files to `jq` with `--slurpfile` (the value arrives wrapped in an array, `$x[0]`). `--argjson "$(cat file)"` overflows the shell's argument limit with these files.
 
 ## Project layout
 
