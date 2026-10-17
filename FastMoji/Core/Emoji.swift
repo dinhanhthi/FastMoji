@@ -16,6 +16,12 @@ struct Emoji: Codable, Hashable, Identifiable, Sendable {
     var skinTones: Bool? = nil
     /// `skin_tones_version`: Emoji version of the toned forms, only when newer than `version`.
     var skinTonesVersion: Double? = nil
+    /// Which file the row came from (nil = emoji). Set at load, never decoded.
+    var kind: Kind? = nil
+
+    enum Kind: String, Codable, Sendable {
+        case symbol, kaomoji
+    }
 
     var id: String { emoji }
 
@@ -47,26 +53,39 @@ struct Emoji: Codable, Hashable, Identifiable, Sendable {
 }
 
 enum EmojiCatalog {
-    /// Loads `emoji.json` from the bundle, keeping file order (emojibase order is category order).
-    /// Rows newer than `maxVersion` are dropped (the system font can't draw them); rows with no
-    /// version are kept. Rows whose toned forms are newer than `maxVersion` lose `skinTones`.
+    /// Loads `emoji.json`, then `symbols.json` and `kaomoji.json`, from the bundle, keeping file
+    /// order (emojibase order is category order). Each file fails closed on its own.
+    /// Emoji rows newer than `maxVersion` are dropped (the system font can't draw them); rows with
+    /// no version are kept. Rows whose toned forms are newer than `maxVersion` lose `skinTones`.
     static func load(
         bundle: Bundle = .main,
         maxVersion: Double = maxEmojiVersion(for: ProcessInfo.processInfo.operatingSystemVersion)
     ) -> [Emoji] {
+        let emojis = load("emoji", kind: nil, bundle: bundle)
+            .filter { ($0.version ?? 0) <= maxVersion }
+            .map { emoji in
+                var emoji = emoji
+                if (emoji.skinTonesVersion ?? 0) > maxVersion { emoji.skinTones = nil }
+                return emoji
+            }
+        return emojis
+            + load("symbols", kind: .symbol, bundle: bundle)
+            + load("kaomoji", kind: .kaomoji, bundle: bundle)
+    }
+
+    /// The rows of `<resource>.json` tagged with `kind`, or none if the file is missing or broken.
+    private static func load(_ resource: String, kind: Emoji.Kind?, bundle: Bundle) -> [Emoji] {
         do {
-            guard let url = bundle.url(forResource: "emoji", withExtension: "json") else {
+            guard let url = bundle.url(forResource: resource, withExtension: "json") else {
                 throw CocoaError(.fileNoSuchFile)
             }
-            return try JSONDecoder().decode([Emoji].self, from: Data(contentsOf: url))
-                .filter { ($0.version ?? 0) <= maxVersion }
-                .map { emoji in
-                    var emoji = emoji
-                    if (emoji.skinTonesVersion ?? 0) > maxVersion { emoji.skinTones = nil }
-                    return emoji
-                }
+            return try JSONDecoder().decode([Emoji].self, from: Data(contentsOf: url)).map { emoji in
+                var emoji = emoji
+                emoji.kind = kind
+                return emoji
+            }
         } catch {
-            assertionFailure("Failed to load emoji.json: \(error)")
+            assertionFailure("Failed to load \(resource).json: \(error)")
             return []
         }
     }

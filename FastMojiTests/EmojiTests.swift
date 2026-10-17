@@ -52,6 +52,18 @@ struct EmojiTests {
         #expect(filtered.contains { $0.emoji == "👯" && $0.skinTonesVersion == 17 && $0.skinTones == nil })
     }
 
+    @Test("ids are unique across emoji, symbols and kaomoji in the bundled files")
+    func idsAreUniqueAcrossKinds() {
+        // Loaded fresh: `catalog` above dedupes by glyph, which would hide a collision.
+        let all = EmojiCatalog.load(maxVersion: 17.0)
+        let duplicates = Dictionary(grouping: all, by: \.id).filter { $1.count > 1 }.keys
+
+        // Both extra files must load, or the check would pass on emoji alone.
+        #expect(all.contains { $0.kind == .symbol })
+        #expect(all.contains { $0.kind == .kaomoji })
+        #expect(duplicates.isEmpty, "duplicate ids: \(duplicates.sorted())")
+    }
+
     @Test("typed text is cut into key-event chunks of at most 20 UTF-16 units, between Characters")
     func typedTextChunksKeepCharacters() {
         let text = "( ͡° ͜ʖ ͡°)ヽ(°〇°)ﾉ¯\\_(ツ)_/¯👨‍👩‍👧‍👦🇻🇳🏴󠁧󠁢󠁳󠁣󠁴󠁿"

@@ -10,6 +10,9 @@ private enum Score {
     static let aliasWeight = 2.0
     static let descriptionWeight = 1.0
     static let tagWeight = 0.0
+    /// Taken off symbol and kaomoji catalog scores, so emoji lead unless the match is much
+    /// better; an exact alias (`cmd` → ⌘) still beats an emoji prefix match.
+    static let nonEmojiPenalty = 25.0
     /// Max frecency bonus = 10 * 0.25 = 2.5, below one consecutive-char bonus.
     static let frecencyCap = 10.0
     static let frecencyFactor = 0.25
@@ -132,7 +135,9 @@ struct EmojiSearch: Sendable {
         self.init(index: CatalogIndex(catalog: catalog))
     }
 
-    /// Matching emoji, best first. Empty query returns the catalog order.
+    /// Matching emoji, symbols and kaomoji, best first. Empty query returns the catalog order.
+    /// Catalog ties keep catalog order (emoji, symbols, kaomoji), so grouping the result by `kind`
+    /// in order of first appearance gives sections ordered by best score, emoji first on ties.
     func search(_ query: String, frecency: (String) -> Double) -> [Emoji] {
         let folded = CatalogIndex.fold(query.trimmingCharacters(in: .whitespacesAndNewlines))
         let q = Array(folded.unicodeScalars)
@@ -158,6 +163,7 @@ struct EmojiSearch: Sendable {
                 guard let s = Self.score(q, in: field) else { continue }
                 best = max(best ?? s, s)
             }
+            if index.emojis[i].kind != nil { best = best.map { $0 - Score.nonEmojiPenalty } }
             add(i, catalogScore: best)
         }
         for slot in customScores.keys where slot >= index.emojis.count {

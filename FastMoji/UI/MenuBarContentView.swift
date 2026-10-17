@@ -41,7 +41,7 @@ struct MenuBarContentView: View {
                 secureInputBanner
                 Divider()
             }
-            EmojiGridView(model: model)
+            EmojiGridView(model: model, showsTabs: true)
             Divider()
             footer
         }
