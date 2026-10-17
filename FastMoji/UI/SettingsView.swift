@@ -108,7 +108,7 @@ struct SettingsView: View {
         // Outside the List: a section header is indented, which pushed the logo off-centre.
         .safeAreaInset(edge: .top) {
             about
-                .padding(.top, 8)
+                .padding(.horizontal, 10)
                 .padding(.bottom, 12)
         }
         .navigationSplitViewColumnWidth(190)
@@ -134,6 +134,8 @@ struct SettingsView: View {
                 .help(Self.projectURL.absoluteString)
         }
         .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     static let projectURL = URL(string: "https://github.com/dinhanhthi/FastMoji")!
