@@ -2,19 +2,22 @@ import AppKit
 import Sparkle
 
 /// Sparkle updater, started only when `SUPublicEDKey` is set (an empty key would show a misconfiguration alert).
-/// Background checks (at launch, then every `SUScheduledCheckInterval`) never pop Sparkle's dialog: a found update
-/// sets `updateAvailable`, which shows the update button in the menubar popover and in Settings.
+/// While the menubar item shows, a background check (at launch, then every `SUScheduledCheckInterval`) that finds an
+/// update shows no Sparkle dialog (gentle reminders): it sets `availableUpdateVersion`, which badges the menubar icon
+/// and shows "Update to FastMoji <version>…" in the popover. With the menubar off, Sparkle shows its dialog.
 @MainActor
 @Observable
 final class Updater: NSObject {
     private(set) var canCheck = false
-    private(set) var updateAvailable = false
+    /// Version of the update a background check found, until its update session ends.
+    private(set) var availableUpdateVersion: String?
+    var updateAvailable: Bool { availableUpdateVersion != nil }
 
     @ObservationIgnored private var controller: SPUStandardUpdaterController!
 
     override init() {
         super.init()
-        controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
+        controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: self)
     }
 
     func start() {
@@ -31,32 +34,24 @@ final class Updater: NSObject {
     }
 }
 
-extension Updater: SPUUpdaterDelegate {
-    /// Also called when automatic updates download in the background without any dialog.
-    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
-        updateAvailable = true
-    }
-
-    func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
-        updateAvailable = false
-    }
-
-    func updater(_ updater: SPUUpdater, userDidMake choice: SPUUserUpdateChoice, forUpdate updateItem: SUAppcastItem,
-                 state: SPUUserUpdateState) {
-        if choice == .skip { updateAvailable = false }
-    }
-}
-
 extension Updater: @preconcurrency SPUStandardUserDriverDelegate {
     var supportsGentleScheduledUpdateReminders: Bool { true }
 
-    /// The update button stands in for Sparkle's dialog on background checks.
+    /// The menubar badge stands in for Sparkle's dialog on background checks; with the menubar off, the badge would
+    /// have nowhere to go, so Sparkle shows its dialog.
     func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem,
                                                               andInImmediateFocus immediateFocus: Bool) -> Bool {
-        false
+        !AppSettings.menubarEnabled
     }
 
-    /// Required by Sparkle when the delegate shows scheduled updates; `didFindValidUpdate` already set the flag.
     func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem,
-                                                   state: SPUUserUpdateState) {}
+                                                   state: SPUUserUpdateState) {
+        guard !handleShowingUpdate else { return }
+        availableUpdateVersion = update.displayVersionString
+    }
+
+    /// Clears the badge after install, skip, "Remind Me Later" or an error.
+    func standardUserDriverWillFinishUpdateSession() {
+        if availableUpdateVersion != nil { availableUpdateVersion = nil }
+    }
 }

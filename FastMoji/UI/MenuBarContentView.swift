@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Menubar popover: search field, shared emoji grid, Update / Pause and Check for Updates / Settings / About / Quit footer.
+/// Menubar popover: search field, shared emoji grid, an "Update to FastMoji <version>…" row while an update waits,
+/// and a Pause / Check for Updates / Settings / About / Quit footer.
 /// Enter / click runs `AppSettings.menubarAction`.
 struct MenuBarContentView: View {
     let model: EmojiPickerModel
@@ -43,6 +44,10 @@ struct MenuBarContentView: View {
             }
             EmojiGridView(model: model, showsTabs: true)
             Divider()
+            if let version = updater.availableUpdateVersion {
+                updateRow(version)
+                Divider()
+            }
             footer
         }
         .frame(width: 360)
@@ -122,17 +127,25 @@ struct MenuBarContentView: View {
         .padding(.vertical, 6)
     }
 
+    /// Its own row: the title is too wide for the footer. Brings Sparkle's update window in focus.
+    private func updateRow(_ version: String) -> some View {
+        HStack {
+            Button {
+                close()
+                updater.checkForUpdates()
+            } label: {
+                Label("Update to FastMoji \(version)…", systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(HoverCapsuleButtonStyle())
+            .foregroundStyle(.green)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
     private var footer: some View {
         HStack(spacing: 8) {
-            if updater.updateAvailable {
-                Button {
-                    close()
-                    updater.checkForUpdates()
-                } label: {
-                    Label("Update", systemImage: "arrow.down.circle")
-                }
-                .foregroundStyle(.green)
-            }
             // While paused, the pause row offers Resume instead.
             if let coordinator, !coordinator.isPaused {
                 Button {

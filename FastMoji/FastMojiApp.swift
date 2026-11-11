@@ -30,7 +30,8 @@ private struct MenuBarRoot: View {
     }
 }
 
-/// Status item icon: the logo, dimmed while paused, with a lock badge while Secure Input is on.
+/// Status item icon: the logo, dimmed while paused, with a lock badge while Secure Input is on and a download badge
+/// while an update waits.
 /// Composed as one NSImage: the status item keeps only the label's image, not SwiftUI modifiers.
 private struct MenuBarLabel: View {
     let appDelegate: AppDelegate
@@ -39,32 +40,57 @@ private struct MenuBarLabel: View {
         // Read in the body so the label updates once the coordinator exists and on each change.
         let paused = appDelegate.coordinator?.isPaused ?? false
         let secure = appDelegate.coordinator?.secureInput.isOn ?? false
-        if paused || secure {
-            Image(nsImage: Self.icon(dimmed: paused, locked: secure && !paused))
+        let update = appDelegate.updater.updateAvailable
+        if paused || secure || update {
+            Image(nsImage: Self.icon(dimmed: paused, locked: secure && !paused, update: update))
         } else {
             Image(.menuBarIcon)
         }
     }
 
     /// Drawn lazily at draw time, so the badge color follows the menubar appearance.
-    private static func icon(dimmed: Bool, locked: Bool) -> NSImage {
+    private static func icon(dimmed: Bool, locked: Bool, update: Bool) -> NSImage {
         let logo = NSImage(resource: .menuBarIcon)
-        return NSImage(size: logo.size, flipped: false) { rect in
+        let image = NSImage(size: logo.size, flipped: false) { rect in
             logo.draw(in: rect, from: .zero, operation: .sourceOver, fraction: dimmed ? 0.4 : 1)
-            guard locked,
-                  let lock = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: nil)?
-                      .withSymbolConfiguration(.init(paletteColors: [.labelColor])) else { return true }
-            let height = rect.height / 2
-            let width = height * lock.size.width / max(lock.size.height, 1)
-            let badge = NSRect(x: rect.maxX - width, y: rect.minY, width: width, height: height)
-            // Clear a margin around the badge so the lock stays readable on the colored logo.
-            NSGraphicsContext.current?.compositingOperation = .destinationOut
-            NSColor.black.setFill()
-            NSBezierPath(roundedRect: badge.insetBy(dx: -1, dy: -1), xRadius: 2, yRadius: 2).fill()
-            NSGraphicsContext.current?.compositingOperation = .sourceOver
-            lock.draw(in: badge)
+            if locked, let lock = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(paletteColors: [.labelColor])) {
+                let height = rect.height / 2
+                let width = height * lock.size.width / max(lock.size.height, 1)
+                // Bottom-right, or bottom-left while the update badge takes that corner.
+                let badge = NSRect(x: update ? rect.minX : rect.maxX - width, y: rect.minY, width: width,
+                                   height: height)
+                // Clear a margin around the badge so the lock stays readable on the colored logo.
+                NSGraphicsContext.current?.compositingOperation = .destinationOut
+                NSColor.black.setFill()
+                NSBezierPath(roundedRect: badge.insetBy(dx: -1, dy: -1), xRadius: 2, yRadius: 2).fill()
+                NSGraphicsContext.current?.compositingOperation = .sourceOver
+                lock.draw(in: badge)
+            }
+            if update { drawUpdateBadge(in: rect) }
             return true
         }
+        if update { image.accessibilityDescription = "FastMoji, update available" }
+        return image
+    }
+
+    /// A 9 pt white disc at the bottom-right corner with a bold arrow in a deep green (the system green, 45 % of the
+    /// way to black).
+    private nonisolated static func drawUpdateBadge(in rect: NSRect) {
+        let badge = NSRect(x: rect.maxX - 9, y: rect.minY, width: 9, height: 9)
+        NSColor.white.setFill()
+        NSBezierPath(ovalIn: badge).fill()
+        let green = NSColor.systemGreen.blended(withFraction: 0.45, of: .black) ?? .systemGreen
+        let configuration = NSImage.SymbolConfiguration(pointSize: 9, weight: .black)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [green]))
+        guard let arrow = NSImage(systemSymbolName: "arrow.down", accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration) else { return }
+        // Aspect-fit in the disc's inner square, centred.
+        let inner = badge.insetBy(dx: 1, dy: 1)
+        let scale = min(inner.width / arrow.size.width, inner.height / arrow.size.height)
+        let fitted = NSSize(width: arrow.size.width * scale, height: arrow.size.height * scale)
+        arrow.draw(in: NSRect(x: badge.midX - fitted.width / 2, y: badge.midY - fitted.height / 2,
+                              width: fitted.width, height: fitted.height))
     }
 }
 
