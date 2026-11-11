@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-11
+
 ### Changed
 
 - When the menubar icon is shown and a new version is available, the icon gets a small green download badge and the popover shows "Update to FastMoji <version>…". With the menubar icon off, the update alert shows instead.
